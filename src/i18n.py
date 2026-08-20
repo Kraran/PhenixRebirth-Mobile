@@ -1,0 +1,961 @@
+"""
+Internationalization (i18n) for UI strings.
+
+Supported languages: fr, en, es, de, it, pt, nl, pl, tr, sv, no, da, ru.
+Use set_lang(code), then t("key") / t_help(...) / get_credits_lines().
+Language choice is persisted in settings.json.
+"""
+LANGS = [
+    ("fr", "Français"),
+    ("en", "English"),
+    ("es", "Español"),
+    ("de", "Deutsch"),
+    ("it", "Italiano"),
+    ("pt", "Português"),
+    ("nl", "Nederlands"),
+    ("pl", "Polski"),
+    ("tr", "Türkçe"),
+    ("sv", "Svenska"),
+    ("no", "Norsk"),
+    ("da", "Dansk"),
+    ("ru", "Русский"),
+]
+
+LANG_CODES = [c for c, _ in LANGS]
+
+# key -> {lang: text}
+T = {
+    # Main menu
+    "play": {
+        "fr": "JOUER", "en": "PLAY", "es": "JUGAR", "de": "SPIELEN", "it": "GIOCA",
+        "pt": "JOGAR", "nl": "SPELEN", "pl": "GRAJ", "tr": "OYNA", "sv": "SPELA",
+        "no": "SPILL", "da": "SPIL", "ru": "ИГРАТЬ",
+    },
+    "difficulty": {
+        "fr": "DIFFICULTE", "en": "DIFFICULTY", "es": "DIFICULTAD", "de": "SCHWIERIGKEIT",
+        "it": "DIFFICOLTA", "pt": "DIFICULDADE", "nl": "MOEILIJKHEID", "pl": "TRUDNOSC",
+        "tr": "ZORLUK", "sv": "SVARIGHETSGRAD", "no": "VANSKELIGHETSGRAD", "da": "SVARHEDSGRAD",
+        "ru": "СЛОЖНОСТЬ",
+    },
+    "options": {
+        "fr": "OPTIONS", "en": "OPTIONS", "es": "OPCIONES", "de": "OPTIONEN", "it": "OPZIONI",
+        "pt": "OPCOES", "nl": "OPTIES", "pl": "OPCJE", "tr": "AYARLAR", "sv": "ALTERNATIV",
+        "no": "ALTERNATIVER", "da": "INDSTILLINGER", "ru": "ОПЦИИ",
+    },
+    "high_scores": {
+        "fr": "HIGH SCORES", "en": "HIGH SCORES", "es": "RECORDS", "de": "HIGHSCORES",
+        "it": "CLASSIFICA", "pt": "RECORDES", "nl": "HIGHSCORES", "pl": "REKORDY",
+        "tr": "YUKSEK SKORLAR", "sv": "TOPPLISTA", "no": "TOPPLISTE", "da": "HIGH SCORES",
+        "ru": "РЕКОРДЫ",
+    },
+    "credits": {
+        "fr": "CREDITS", "en": "CREDITS", "es": "CREDITOS", "de": "CREDITS", "it": "CREDITI",
+        "pt": "CREDITOS", "nl": "CREDITS", "pl": "TWORY", "tr": "JENERIK", "sv": "EFTERTEXT",
+        "no": "CREDITS", "da": "RULLETEKST", "ru": "ТИТРЫ",
+    },
+    "quit": {
+        "fr": "QUITTER", "en": "QUIT", "es": "SALIR", "de": "BEENDEN", "it": "ESCI",
+        "pt": "SAIR", "nl": "AFSLUITEN", "pl": "WYJSCIE", "tr": "CIKIS", "sv": "AVSLUTA",
+        "no": "AVSLUTT", "da": "AFSLUT", "ru": "ВЫХОД",
+    },
+    "diff_novice": {
+        "fr": "Novice", "en": "Novice", "es": "Novato", "de": "Anfanger", "it": "Principiante",
+        "pt": "Iniciante", "nl": "Beginner", "pl": "Poczatkujacy", "tr": "Acemi", "sv": "Nybörjare",
+        "no": "Nybegynner", "da": "Begynder", "ru": "Новичок",
+    },
+    "diff_normal": {
+        "fr": "Normal", "en": "Normal", "es": "Normal", "de": "Normal", "it": "Normale",
+        "pt": "Normal", "nl": "Normaal", "pl": "Normalny", "tr": "Normal", "sv": "Normal",
+        "no": "Normal", "da": "Normal", "ru": "Обычный",
+    },
+    "diff_veteran": {
+        "fr": "Veteran", "en": "Veteran", "es": "Veterano", "de": "Veteran", "it": "Veterano",
+        "pt": "Veterano", "nl": "Veteran", "pl": "Weteran", "tr": "Veteran", "sv": "Veteran",
+        "no": "Veteran", "da": "Veteran", "ru": "Ветеран",
+    },
+    "gamepad_detected": {
+        "fr": "Manette detectee", "en": "Gamepad detected", "es": "Mando detectado",
+        "de": "Gamepad erkannt", "it": "Controller rilevato", "pt": "Comando detetado",
+        "nl": "Controller gedetecteerd", "pl": "Wykryto pad", "tr": "Kol algilandi",
+        "sv": "Handkontroll upptackt", "no": "Kontroller oppdaget", "da": "Controller registreret",
+        "ru": "Геймпад обнаружен",
+    },
+    "gamepad_none": {
+        "fr": "Aucune manette detectee", "en": "No gamepad detected", "es": "Ningun mando detectado",
+        "de": "Kein Gamepad erkannt", "it": "Nessun controller", "pt": "Nenhum comando",
+        "nl": "Geen controller", "pl": "Brak pada", "tr": "Kol yok",
+        "sv": "Ingen handkontroll", "no": "Ingen kontroller", "da": "Ingen controller",
+        "ru": "Геймпад не найден",
+    },
+    "press_confirm": {
+        "fr": "ENTREE / A  —  Valider", "en": "ENTER / A  —  Confirm", "es": "ENTER / A  —  Confirmar",
+        "de": "ENTER / A  —  Bestatigen", "it": "INVIO / A  —  Conferma", "pt": "ENTER / A  —  Confirmar",
+        "nl": "ENTER / A  —  Bevestigen", "pl": "ENTER / A  —  Zatwierdz", "tr": "ENTER / A  —  Onayla",
+        "sv": "ENTER / A  —  Bekrafta", "no": "ENTER / A  —  Bekreft", "da": "ENTER / A  —  Bekraft",
+        "ru": "ENTER / A  —  Подтвердить",
+    },
+    "controls_pad": {
+        "fr": "Stick / D-Pad  =  Naviguer     A  =  Valider",
+        "en": "Stick / D-Pad  =  Navigate     A  =  Confirm",
+        "es": "Stick / D-Pad  =  Navegar     A  =  Confirmar",
+        "de": "Stick / D-Pad  =  Navigieren     A  =  Bestatigen",
+        "it": "Stick / D-Pad  =  Navigare     A  =  Conferma",
+        "pt": "Stick / D-Pad  =  Navegar     A  =  Confirmar",
+        "nl": "Stick / D-Pad  =  Navigeren     A  =  Bevestigen",
+        "pl": "Stick / D-Pad  =  Nawigacja     A  =  Zatwierdz",
+        "tr": "Stick / D-Pad  =  Gezin     A  =  Onayla",
+        "sv": "Stick / D-Pad  =  Navigera     A  =  Bekrafta",
+        "no": "Stick / D-Pad  =  Naviger     A  =  Bekreft",
+        "da": "Stick / D-Pad  =  Naviger     A  =  Bekraft",
+        "ru": "Стик / D-Pad  =  Навигация     A  =  ОК",
+    },
+    "controls_kb": {
+        "fr": "Fleches  =  Naviguer     Entree  =  Valider",
+        "en": "Arrows  =  Navigate     Enter  =  Confirm",
+        "es": "Flechas  =  Navegar     Enter  =  Confirmar",
+        "de": "Pfeile  =  Navigieren     Enter  =  Bestatigen",
+        "it": "Frecce  =  Navigare     Invio  =  Conferma",
+        "pt": "Setas  =  Navegar     Enter  =  Confirmar",
+        "nl": "Pijlen  =  Navigeren     Enter  =  Bevestigen",
+        "pl": "Strzalki  =  Nawigacja     Enter  =  Zatwierdz",
+        "tr": "Yon tuslari  =  Gezin     Enter  =  Onayla",
+        "sv": "Pilar  =  Navigera     Enter  =  Bekrafta",
+        "no": "Piltaster  =  Naviger     Enter  =  Bekreft",
+        "da": "Pile  =  Naviger     Enter  =  Bekraft",
+        "ru": "Стрелки  =  Навигация     Enter  =  ОК",
+    },
+    "subtitle": {
+        "fr": "A modern remake of the classic arcade game",
+        "en": "A modern remake of the classic arcade game",
+        "es": "Un remake moderno del clasico arcade",
+        "de": "Ein modernes Remake des Arcade-Klassikers",
+        "it": "Un remake moderno del classico arcade",
+        "pt": "Um remake moderno do classico arcade",
+        "nl": "Een moderne remake van de arcadeklassieker",
+        "pl": "Nowoczesny remake klasycznej gry arcade",
+        "tr": "Klasik arcade oyununun modern yeniden yapimi",
+        "sv": "En modern remake av den klassiska arkadspelen",
+        "no": "En moderne remake av den klassiske arkadespillet",
+        "da": "En moderne remake af det klassiske arkadespil",
+        "ru": "Современный ремейк классического аркадного хита",
+    },
+    # Options
+    "opt_control": {
+        "fr": "Controle", "en": "Controls", "es": "Control", "de": "Steuerung", "it": "Comandi",
+        "pt": "Controlo", "nl": "Besturing", "pl": "Sterowanie", "tr": "Kontrol", "sv": "Kontroller",
+        "no": "Kontroller", "da": "Styring", "ru": "Управление",
+    },
+    "opt_sfx": {
+        "fr": "Volume SFX", "en": "SFX Volume", "es": "Volumen SFX", "de": "SFX-Lautstarke",
+        "it": "Volume SFX", "pt": "Volume SFX", "nl": "SFX-volume", "pl": "Glosnosc SFX",
+        "tr": "SFX Sesi", "sv": "SFX-volym", "no": "SFX-volum", "da": "SFX-lydstyrke",
+        "ru": "Громкость SFX",
+    },
+    "opt_music": {
+        "fr": "Volume Musique", "en": "Music Volume", "es": "Volumen Musica", "de": "Musiklautstarke",
+        "it": "Volume Musica", "pt": "Volume Musica", "nl": "Muziekvolume", "pl": "Glosnosc muzyki",
+        "tr": "Muzik Sesi", "sv": "Musikvolym", "no": "Musikkvolum", "da": "Musiklydstyrke",
+        "ru": "Громкость музыки",
+    },
+    "opt_display": {
+        "fr": "Affichage", "en": "Display", "es": "Pantalla", "de": "Anzeige", "it": "Schermo",
+        "pt": "Ecran", "nl": "Weergave", "pl": "Wyswietlacz", "tr": "Gorunum", "sv": "Skarm",
+        "no": "Skjerm", "da": "Skarm", "ru": "Экран",
+    },
+    "opt_fps": {
+        "fr": "Compteur FPS", "en": "FPS Counter", "es": "Contador FPS", "de": "FPS-Zahler",
+        "it": "Contatore FPS", "pt": "Contador FPS", "nl": "FPS-teller", "pl": "Licznik FPS",
+        "tr": "FPS Sayaci", "sv": "FPS-raknare", "no": "FPS-teller", "da": "FPS-taeller",
+        "ru": "Счётчик FPS",
+    },
+    "opt_language": {
+        "fr": "Langue", "en": "Language", "es": "Idioma", "de": "Sprache", "it": "Lingua",
+        "pt": "Idioma", "nl": "Taal", "pl": "Jezyk", "tr": "Dil", "sv": "Sprak",
+        "no": "Sprak", "da": "Sprog", "ru": "Язык",
+    },
+    "opt_reset_hs": {
+        "fr": "Reset High Scores", "en": "Reset High Scores", "es": "Borrar records",
+        "de": "Highscores zurucksetzen", "it": "Azzera classifica", "pt": "Repor recordes",
+        "nl": "Highscores resetten", "pl": "Reset rekordow", "tr": "Skorlari sifirla",
+        "sv": "Aterstall topplista", "no": "Nullstill toppliste", "da": "Nulstil high scores",
+        "ru": "Сброс рекордов",
+    },
+    "opt_back": {
+        "fr": "Retour", "en": "Back", "es": "Volver", "de": "Zuruck", "it": "Indietro",
+        "pt": "Voltar", "nl": "Terug", "pl": "Wstecz", "tr": "Geri", "sv": "Tillbaka",
+        "no": "Tilbake", "da": "Tilbage", "ru": "Назад",
+    },
+    "ctrl_pad": {
+        "fr": "Manette", "en": "Gamepad", "es": "Mando", "de": "Gamepad", "it": "Controller",
+        "pt": "Comando", "nl": "Controller", "pl": "Pad", "tr": "Kol", "sv": "Handkontroll",
+        "no": "Kontroller", "da": "Controller", "ru": "Геймпад",
+    },
+    "ctrl_kb": {
+        "fr": "Clavier", "en": "Keyboard", "es": "Teclado", "de": "Tastatur", "it": "Tastiera",
+        "pt": "Teclado", "nl": "Toetsenbord", "pl": "Klawiatura", "tr": "Klavye", "sv": "Tangentbord",
+        "no": "Tastatur", "da": "Tastatur", "ru": "Клавиатура",
+    },
+    "disp_window": {
+        "fr": "Fenetre", "en": "Window", "es": "Ventana", "de": "Fenster", "it": "Finestra",
+        "pt": "Janela", "nl": "Venster", "pl": "Okno", "tr": "Pencere", "sv": "Fonster",
+        "no": "Vindu", "da": "Vindue", "ru": "Окно",
+    },
+    "disp_fullscreen": {
+        "fr": "Plein ecran", "en": "Fullscreen", "es": "Pantalla completa", "de": "Vollbild",
+        "it": "Schermo intero", "pt": "Ecran inteiro", "nl": "Volledig scherm", "pl": "Pelny ekran",
+        "tr": "Tam ekran", "sv": "Helskärm", "no": "Fullskjerm", "da": "Fuld skaerm",
+        "ru": "Полный экран",
+    },
+    "disp_borderless": {
+        "fr": "Fenetre sans bord", "en": "Borderless", "es": "Sin bordes", "de": "Rahmenlos",
+        "it": "Senza bordi", "pt": "Sem bordas", "nl": "Randloos", "pl": "Bez ramek",
+        "tr": "Kenarliksiz", "sv": "Ramlos", "no": "Kantlos", "da": "Kantlos",
+        "ru": "Без рамки",
+    },
+    "yes": {
+        "fr": "Oui", "en": "Yes", "es": "Si", "de": "Ja", "it": "Si", "pt": "Sim",
+        "nl": "Ja", "pl": "Tak", "tr": "Evet", "sv": "Ja", "no": "Ja", "da": "Ja", "ru": "Да",
+    },
+    "no": {
+        "fr": "Non", "en": "No", "es": "No", "de": "Nein", "it": "No", "pt": "Nao",
+        "nl": "Nee", "pl": "Nie", "tr": "Hayir", "sv": "Nej", "no": "Nei", "da": "Nej", "ru": "Нет",
+    },
+    "opt_hint": {
+        "fr": "Gauche / Droite = regler     Entree = valider",
+        "en": "Left / Right = adjust     Enter = confirm",
+        "es": "Izquierda / Derecha = ajustar     Enter = confirmar",
+        "de": "Links / Rechts = anpassen     Enter = bestatigen",
+        "it": "Sinistra / Destra = regola     Invio = conferma",
+        "pt": "Esquerda / Direita = ajustar     Enter = confirmar",
+        "nl": "Links / Rechts = aanpassen     Enter = bevestigen",
+        "pl": "Lewo / Prawo = zmien     Enter = zatwierdz",
+        "tr": "Sol / Sag = ayarla     Enter = onayla",
+        "sv": "Vanster / Hoger = justera     Enter = bekrafta",
+        "no": "Venstre / Hoyre = juster     Enter = bekreft",
+        "da": "Venstre / Hojre = juster     Enter = bekraft",
+        "ru": "Влево / Вправо = изменить     Enter = ОК",
+    },
+    "reset_hs_title": {
+        "fr": "RESET HIGH SCORES ?", "en": "RESET HIGH SCORES ?", "es": "BORRAR RECORDS ?",
+        "de": "HIGHSCORES ZURUCKSETZEN ?", "it": "AZZERARE CLASSIFICA ?", "pt": "REPOR RECORDES ?",
+        "nl": "HIGHSCORES RESETTEN ?", "pl": "RESET REKORDOW ?", "tr": "SKORLARI SIFIRLA ?",
+        "sv": "ATERSTALL TOPPLISTA ?", "no": "NULLSTILL TOPPLISTE ?", "da": "NULSTIL HIGH SCORES ?",
+        "ru": "СБРОСИТЬ РЕКОРДЫ ?",
+    },
+    "reset_hs_warn": {
+        "fr": "Les scores reviendront aux valeurs par defaut.",
+        "en": "Scores will return to default values.",
+        "es": "Los records volveran a los valores por defecto.",
+        "de": "Die Scores werden auf Standardwerte zuruckgesetzt.",
+        "it": "I punteggi torneranno ai valori predefiniti.",
+        "pt": "Os recordes voltarao aos valores padrao.",
+        "nl": "Scores keren terug naar standaardwaarden.",
+        "pl": "Wyniki wroca do wartosci domyslnych.",
+        "tr": "Skorlar varsayilana donecek.",
+        "sv": "Poangen atergar till standardvarden.",
+        "no": "Poengsummene gar tilbake til standard.",
+        "da": "Scorene vender tilbage til standard.",
+        "ru": "Очки вернутся к значениям по умолчанию.",
+    },
+    # Pause / quit
+    "pause": {
+        "fr": "PAUSE", "en": "PAUSE", "es": "PAUSA", "de": "PAUSE", "it": "PAUSA",
+        "pt": "PAUSA", "nl": "PAUZE", "pl": "PAUZA", "tr": "DURAKLAT", "sv": "PAUS",
+        "no": "PAUSE", "da": "PAUSE", "ru": "ПАУЗА",
+    },
+    "resume": {
+        "fr": "REPRENDRE", "en": "RESUME", "es": "CONTINUAR", "de": "FORTSETZEN", "it": "RIPRENDI",
+        "pt": "CONTINUAR", "nl": "HERVATTEN", "pl": "WZNOW", "tr": "DEVAM", "sv": "FORTSATT",
+        "no": "FORTSETT", "da": "FORTSAT", "ru": "ПРОДОЛЖИТЬ",
+    },
+    "quit_run": {
+        "fr": "QUITTER LA PARTIE", "en": "QUIT RUN", "es": "SALIR DE LA PARTIDA",
+        "de": "SPIEL BEENDEN", "it": "ESCI DALLA PARTITA", "pt": "SAIR DA PARTIDA",
+        "nl": "SPEL VERLATEN", "pl": "OPUSC ROZGRYWKE", "tr": "OYUNDAN CIK",
+        "sv": "AVSLUTA OMGANG", "no": "AVSLUTT RUNDE", "da": "AFSLUT SPIL",
+        "ru": "ВЫЙТИ ИЗ ИГРЫ",
+    },
+    "quit_game": {
+        "fr": "QUITTER", "en": "QUIT", "es": "SALIR", "de": "BEENDEN", "it": "ESCI",
+        "pt": "SAIR", "nl": "AFSLUITEN", "pl": "WYJSCIE", "tr": "CIKIS", "sv": "AVSLUTA",
+        "no": "AVSLUTT", "da": "AFSLUT", "ru": "ВЫХОД",
+    },
+    "quit_game_q": {
+        "fr": "Fermer le jeu ?", "en": "Close the game ?", "es": "Cerrar el juego ?",
+        "de": "Spiel schliessen ?", "it": "Chiudere il gioco ?", "pt": "Fechar o jogo ?",
+        "nl": "Spel sluiten ?", "pl": "Zamknac gre ?", "tr": "Oyunu kapat ?",
+        "sv": "Stang spelet ?", "no": "Lukk spillet ?", "da": "Luk spillet ?",
+        "ru": "Закрыть игру ?",
+    },
+    "yes_u": {
+        "fr": "OUI", "en": "YES", "es": "SI", "de": "JA", "it": "SI", "pt": "SIM",
+        "nl": "JA", "pl": "TAK", "tr": "EVET", "sv": "JA", "no": "JA", "da": "JA", "ru": "ДА",
+    },
+    "no_u": {
+        "fr": "NON", "en": "NO", "es": "NO", "de": "NEIN", "it": "NO", "pt": "NAO",
+        "nl": "NEE", "pl": "NIE", "tr": "HAYIR", "sv": "NEJ", "no": "NEI", "da": "NEJ", "ru": "НЕТ",
+    },
+    # HUD
+    "stage": {
+        "fr": "STAGE", "en": "STAGE", "es": "FASE", "de": "STAGE", "it": "LIVELLO",
+        "pt": "FASE", "nl": "STAGE", "pl": "ETAP", "tr": "BOLUM", "sv": "BANAN",
+        "no": "LEVEL", "da": "BANE", "ru": "УРОВЕНЬ",
+    },
+    "lives_inf": {
+        "fr": "VIES : ∞", "en": "LIVES : ∞", "es": "VIDAS : ∞", "de": "LEBEN : ∞",
+        "it": "VITE : ∞", "pt": "VIDAS : ∞", "nl": "LEVENS : ∞", "pl": "ZYCIA : ∞",
+        "tr": "CAN : ∞", "sv": "LIV : ∞", "no": "LIV : ∞", "da": "LIV : ∞", "ru": "ЖИЗНИ : ∞",
+    },
+    "one_up": {
+        "fr": "1UP !", "en": "1UP !", "es": "1UP !", "de": "1UP !", "it": "1UP !",
+        "pt": "1UP !", "nl": "1UP !", "pl": "1UP !", "tr": "1UP !", "sv": "1UP !",
+        "no": "1UP !", "da": "1UP !", "ru": "1UP !",
+    },
+    "press_any": {
+        "fr": "Appuie sur une touche / bouton  —  Retour",
+        "en": "Press any key / button  —  Back",
+        "es": "Pulsa una tecla / boton  —  Volver",
+        "de": "Taste / Knopf  —  Zuruck",
+        "it": "Premi un tasto / pulsante  —  Indietro",
+        "pt": "Prima uma tecla / botao  —  Voltar",
+        "nl": "Druk op een toets / knop  —  Terug",
+        "pl": "Nacisnij klawisz / przycisk  —  Wstecz",
+        "tr": "Bir tus / dugme  —  Geri",
+        "sv": "Tryck pa en tangent / knapp  —  Tillbaka",
+        "no": "Trykk en tast / knapp  —  Tilbake",
+        "da": "Tryk pa en tast / knap  —  Tilbage",
+        "ru": "Клавиша / кнопка  —  Назад",
+    },
+    "enter_initials": {
+        "fr": "ENTRE TES INITIALES", "en": "ENTER YOUR INITIALS", "es": "INTRODUCE TUS INICIALES",
+        "de": "INITIALEN EINGEBEN", "it": "INSERISCI LE INIZIALI", "pt": "INTRODUZ AS INICIAIS",
+        "nl": "VOER JE INITIALEN IN", "pl": "WPISZ INICJALY", "tr": "BAS HARFLERINI GIR",
+        "sv": "ANGE DINA INITIALER", "no": "SKRIV INN INITIALER", "da": "INDTAST INITIALER",
+        "ru": "ВВЕДИТЕ ИНИЦИАЛЫ",
+    },
+    "help_return": {
+        "fr": "Une touche / stick  —  Retour",
+        "en": "Any key / stick  —  Back",
+        "es": "Cualquier tecla / stick  —  Volver",
+        "de": "Taste / Stick  —  Zuruck",
+        "it": "Tasto / stick  —  Indietro",
+        "pt": "Qualquer tecla / stick  —  Voltar",
+        "nl": "Toets / stick  —  Terug",
+        "pl": "Klawisz / stick  —  Wstecz",
+        "tr": "Tus / stick  —  Geri",
+        "sv": "Tangent / spak  —  Tillbaka",
+        "no": "Tast / spak  —  Tilbake",
+        "da": "Tast / stick  —  Tilbage",
+        "ru": "Клавиша / стик  —  Назад",
+    },
+    "new_record": {
+        "fr": "NOUVEAU RECORD", "en": "NEW RECORD", "es": "NUEVO RECORD", "de": "NEUER REKORD",
+        "it": "NUOVO RECORD", "pt": "NOVO RECORDE", "nl": "NIEUW RECORD", "pl": "NOWY REKORD",
+        "tr": "YENI REKOR", "sv": "NYTT REKORD", "no": "NY REKORD", "da": "NY REKORD",
+        "ru": "НОВЫЙ РЕКОРД",
+    },
+    "score_label": {
+        "fr": "Score", "en": "Score", "es": "Puntuacion", "de": "Punktzahl", "it": "Punteggio",
+        "pt": "Pontuacao", "nl": "Score", "pl": "Wynik", "tr": "Skor", "sv": "Poang",
+        "no": "Poeng", "da": "Score", "ru": "Счёт",
+    },
+    "your_score": {
+        "fr": "Ton score", "en": "Your score", "es": "Tu puntuacion", "de": "Dein Score",
+        "it": "Il tuo punteggio", "pt": "A tua pontuacao", "nl": "Jouw score", "pl": "Twoj wynik",
+        "tr": "Skorun", "sv": "Din poang", "no": "Din poengsum", "da": "Din score",
+        "ru": "Твой счёт",
+    },
+    "enter_initials_hint": {
+        "fr": "Entre tes initiales", "en": "Enter your initials", "es": "Introduce tus iniciales",
+        "de": "Initialen eingeben", "it": "Inserisci le iniziali", "pt": "Introduz as iniciais",
+        "nl": "Voer je initialen in", "pl": "Wpisz inicjaly", "tr": "Bas harflerini gir",
+        "sv": "Ange dina initialer", "no": "Skriv inn initialer", "da": "Indtast initialer",
+        "ru": "Введите инициалы",
+    },
+    "back_to_menu": {
+        "fr": "ENTREE / A  —  Menu principal",
+        "en": "ENTER / A  —  Main menu",
+        "es": "ENTER / A  —  Menu principal",
+        "de": "ENTER / A  —  Hauptmenu",
+        "it": "INVIO / A  —  Menu principale",
+        "pt": "ENTER / A  —  Menu principal",
+        "nl": "ENTER / A  —  Hoofdmenu",
+        "pl": "ENTER / A  —  Menu glowne",
+        "tr": "ENTER / A  —  Ana menu",
+        "sv": "ENTER / A  —  Huvudmeny",
+        "no": "ENTER / A  —  Hovedmeny",
+        "da": "ENTER / A  —  Hovedmenu",
+        "ru": "ENTER / A  —  Главное меню",
+    },
+
+    "demo": {
+        "fr": "DEMO", "en": "DEMO", "es": "DEMO", "de": "DEMO", "it": "DEMO",
+        "pt": "DEMO", "nl": "DEMO", "pl": "DEMO", "tr": "DEMO", "sv": "DEMO",
+        "no": "DEMO", "da": "DEMO", "ru": "ДЕМО",
+    },
+    "hs_entry_controls": {
+        "fr": "Clavier: tape tes lettres   |   Manette: stick + A pour valider",
+        "en": "Keyboard: type letters   |   Gamepad: stick + A to confirm",
+        "es": "Teclado: escribe letras   |   Mando: stick + A para confirmar",
+        "de": "Tastatur: Buchstaben tippen   |   Gamepad: Stick + A zum Bestaetigen",
+        "it": "Tastiera: digita le lettere   |   Controller: stick + A per confermare",
+        "pt": "Teclado: escreve as letras   |   Comando: stick + A para confirmar",
+        "nl": "Toetsenbord: typ letters   |   Controller: stick + A om te bevestigen",
+        "pl": "Klawiatura: wpisz litery   |   Pad: stick + A aby zatwierdzic",
+        "tr": "Klavye: harfleri yaz   |   Kol: stick + A ile onayla",
+        "sv": "Tangentbord: skriv bokstaver   |   Handkontroll: spak + A for att bekrafta",
+        "no": "Tastatur: skriv bokstaver   |   Kontroller: spak + A for a bekrefte",
+        "da": "Tastatur: skriv bogstaver   |   Controller: stick + A for at bekrafte",
+        "ru": "Клавиатура: введите буквы   |   Геймпад: стик + A для подтверждения",
+    },
+    "cheat_active": {
+        "fr": "Cheat actif", "en": "Cheat active", "es": "Truco activo", "de": "Cheat aktiv",
+        "it": "Cheat attivo", "pt": "Cheat ativo", "nl": "Cheat actief", "pl": "Cheat aktywny",
+        "tr": "Hile aktif", "sv": "Fusk aktivt", "no": "Juks aktiv", "da": "Snyd aktiv",
+        "ru": "Чит активен",
+    },
+
+}
+
+# Help screen blocks (list of lines per lang would be huge — store as multiline keys)
+HELP = {
+    "scenario_h": {
+        "fr": "SCENARIO", "en": "STORY", "es": "HISTORIA", "de": "SZENARIO", "it": "STORIA",
+        "pt": "HISTORIA", "nl": "VERHAAL", "pl": "FABULA", "tr": "HIKAYE", "sv": "BERATTELSE",
+        "no": "HISTORIE", "da": "HISTORIE", "ru": "СЮЖЕТ",
+    },
+    "scenario": {
+        "fr": [
+            "Dans les confins de l'espace, des essaims",
+            "d'oiseaux hostiles et des gargouilles",
+            "menacent la derniere flotte libre.",
+            "Seul un chasseur d'elite peut percer",
+            "la soucoupe-mere et briser le cycle.",
+        ],
+        "en": [
+            "In the depths of space, hostile flocks",
+            "of birds and stone gargoyles",
+            "threaten the last free fleet.",
+            "Only an elite fighter can pierce",
+            "the mothership and break the cycle.",
+        ],
+        "es": [
+            "En los confines del espacio, enjambres",
+            "de pajaros hostiles y gargolas",
+            "amenazan la ultima flota libre.",
+            "Solo un caza de elite puede perforar",
+            "la nave madre y romper el ciclo.",
+        ],
+        "de": [
+            "In den Tiefen des Alls bedrohen",
+            "feindliche Vogelschwarme und Gargoyles",
+            "die letzte freie Flotte.",
+            "Nur ein Elitejager kann das",
+            "Mutterschiff durchbrechen und den Zyklus beenden.",
+        ],
+        "it": [
+            "Nei confini dello spazio, stormi",
+            "di uccelli ostili e gargoyle",
+            "minacciano l'ultima flotta libera.",
+            "Solo un caccia d'elite puo perforare",
+            "l'astronave madre e spezzare il ciclo.",
+        ],
+        "pt": [
+            "Nos confins do espaco, enxames",
+            "de passaros hostis e gargulas",
+            "ameacam a ultima frota livre.",
+            "So um cacador de elite pode perfurar",
+            "a nave-mae e quebrar o ciclo.",
+        ],
+        "nl": [
+            "In de diepten van de ruimte bedreigen",
+            "vijandige vogelszwermen en gargoyles",
+            "de laatste vrije vloot.",
+            "Alleen een elitejager kan het",
+            "moederschip doorbreken en de cyclus stoppen.",
+        ],
+        "pl": [
+            "Na krancach kosmosu wrogie roje",
+            "ptakow i kamienne gargulce",
+            "zagrazaia ostatniej wolnej flocie.",
+            "Tylko elitarny mysliwiec przebije",
+            "statek-matke i przerwie cykl.",
+        ],
+        "tr": [
+            "Uzayin derinliklerinde dusman",
+            "kus suruleri ve gargoiller",
+            "son ozgur filoyu tehdit ediyor.",
+            "Yalnizca bir elit savasci",
+            "ana gemiyi delebilir ve donguyu kirabilir.",
+        ],
+        "sv": [
+            "I rymdens djup hotar fientliga",
+            "fagelflockar och gargoyler",
+            "den sista fria flottan.",
+            "Endast en elitjagre kan genomborra",
+            "moderskeppet och bryta cykeln.",
+        ],
+        "no": [
+            "I rommets dyp truer fiendtlige",
+            "fugleflokker og gargoyler",
+            "den siste frie flaten.",
+            "Bare en elitejager kan bore gjennom",
+            "moderskipet og bryte syklusen.",
+        ],
+        "da": [
+            "I rummets dyb truer fjendtlige",
+            "fugleflokke og gargoyler",
+            "den sidste frie flade.",
+            "Kun en elitejaeger kan gennembryde",
+            "moderskibet og bryde cyklen.",
+        ],
+        "ru": [
+            "В глубинах космоса враждебные",
+            "стаи птиц и каменные горгульи",
+            "угрожают последнему свободному флоту.",
+            "Лишь элитный истребитель пробьёт",
+            "материнский корабль и прервёт цикл.",
+        ],
+    },
+    "howto_h": {
+        "fr": "COMMENT JOUER", "en": "HOW TO PLAY", "es": "COMO JUGAR", "de": "SPIELANLEITUNG",
+        "it": "COME GIOCARE", "pt": "COMO JOGAR", "nl": "HOE TE SPELEN", "pl": "JAK GRAC",
+        "tr": "NASIL OYNANIR", "sv": "HUR MAN SPELAR", "no": "HVORDAN SPILE", "da": "SADAN SPILLER DU",
+        "ru": "КАК ИГРАТЬ",
+    },
+    "howto": {
+        "fr": [
+            "Deplace-toi  —  un seul tir a la fois",
+            "Detruis les formations, avance stage",
+            "Boss : perce le blindage, vise le coeur",
+            "Attention aux bords et aux piques !",
+        ],
+        "en": [
+            "Move  —  only one shot on screen",
+            "Clear formations, advance stages",
+            "Boss: break the armor, hit the core",
+            "Watch the edges and dive attacks!",
+        ],
+        "es": [
+            "Muevete  —  un solo disparo a la vez",
+            "Destruye formaciones, avanza fases",
+            "Jefe: rompe el blindaje, apunta al nucleo",
+            "Cuidado con los bordes y los picados!",
+        ],
+        "de": [
+            "Bewegen  —  nur ein Schuss gleichzeitig",
+            "Formationen zerstoeren, Stages meistern",
+            "Boss: Panzerung durchbrechen, Kern treffen",
+            "Achtung vor Raendern und Sturzflug!",
+        ],
+        "it": [
+            "Muoviti  —  un solo colpo alla volta",
+            "Distruggi le formazioni, avanza",
+            "Boss: sfonda la corazza, colpisci il nucleo",
+            "Attento ai bordi e agli attacchi in picchiata!",
+        ],
+        "pt": [
+            "Move-te  —  um so tiro de cada vez",
+            "Destroi formacoes, avanca fases",
+            "Chefe: perfura a armadura, acerta o nucleo",
+            "Cuidado com as bordas e os piques!",
+        ],
+        "nl": [
+            "Beweeg  —  slechts een schot tegelijk",
+            "Vernietig formaties, ga verder",
+            "Baas: breek het pantser, raak de kern",
+            "Let op randen en duikvluchten!",
+        ],
+        "pl": [
+            "Ruszaj sie  —  tylko jeden strzal",
+            "Niszcz formacje, awansuj etapy",
+            "Boss: przebij pancerz, traf w serce",
+            "Uwazaj na krawedzie i ataki nurkujace!",
+        ],
+        "tr": [
+            "Hareket et  —  ayni anda tek atis",
+            "Formasyonlari yok et, ilerleme kaydet",
+            "Boss: zirhi del, cekirdege vur",
+            "Kenarlara ve dalis saldirilarina dikkat!",
+        ],
+        "sv": [
+            "Rora dig  —  bara ett skott i taget",
+            "Forstora formationer, avancerar",
+            "Boss: bryt pansaret, sikta pa karnan",
+            "Se upp for kanter och dykattacker!",
+        ],
+        "no": [
+            "Beveg deg  —  bare ett skudd om gangen",
+            "Odelegg formasjoner, avanser",
+            "Boss: bryt panseret, sikte pa kjernen",
+            "Pass pa kanter og dykkangrep!",
+        ],
+        "da": [
+            "Bevaeg dig  —  kun et skud ad gangen",
+            "Odelag formationer, avancer",
+            "Boss: bryd panseret, sigt mod kernen",
+            "Pas pa kanter og dyk-angreb!",
+        ],
+        "ru": [
+            "Двигайся  —  только один выстрел",
+            "Уничтожай строй, проходи уровни",
+            "Босс: пробей броню, бей в ядро",
+            "Осторожно с краями и пикированием!",
+        ],
+    },
+    "controls_h": {
+        "fr": "CONTROLES", "en": "CONTROLS", "es": "CONTROLES", "de": "STEUERUNG", "it": "COMANDI",
+        "pt": "CONTROLOS", "nl": "BEDIENING", "pl": "STEROWANIE", "tr": "KONTROLLER",
+        "sv": "KONTROLLER", "no": "KONTROLLER", "da": "STYRING", "ru": "УПРАВЛЕНИЕ",
+    },
+    "controls": {
+        "fr": ["Clavier : fleches + Espace", "Manette : stick + A  |  Start = Pause"],
+        "en": ["Keyboard : arrows + Space", "Gamepad : stick + A  |  Start = Pause"],
+        "es": ["Teclado : flechas + Espacio", "Mando : stick + A  |  Start = Pausa"],
+        "de": ["Tastatur : Pfeile + Leertaste", "Gamepad : Stick + A  |  Start = Pause"],
+        "it": ["Tastiera : frecce + Spazio", "Controller : stick + A  |  Start = Pausa"],
+        "pt": ["Teclado : setas + Espaco", "Comando : stick + A  |  Start = Pausa"],
+        "nl": ["Toetsenbord : pijlen + Spatie", "Controller : stick + A  |  Start = Pauze"],
+        "pl": ["Klawiatura : strzalki + Spacja", "Pad : stick + A  |  Start = Pauza"],
+        "tr": ["Klavye : yon tuslari + Bosluk", "Kol : stick + A  |  Start = Duraklat"],
+        "sv": ["Tangentbord : pilar + Mellanslag", "Handkontroll : spak + A  |  Start = Paus"],
+        "no": ["Tastatur : piltaster + Mellomrom", "Kontroller : spak + A  |  Start = Pause"],
+        "da": ["Tastatur : pile + Mellemrum", "Controller : stick + A  |  Start = Pause"],
+        "ru": ["Клавиатура : стрелки + Пробел", "Геймпад : стик + A  |  Start = Пауза"],
+    },
+    "points_h": {
+        "fr": "POINTS", "en": "POINTS", "es": "PUNTOS", "de": "PUNKTE", "it": "PUNTI",
+        "pt": "PONTOS", "nl": "PUNTEN", "pl": "PUNKTY", "tr": "PUANLAR", "sv": "POANG",
+        "no": "POENG", "da": "POINT", "ru": "ОЧКИ",
+    },
+    "enemy_s1": {
+        "fr": "Oiseau stage 1", "en": "Stage 1 bird", "es": "Pajaro fase 1", "de": "Vogel Stage 1",
+        "it": "Uccello livello 1", "pt": "Passaro fase 1", "nl": "Vogel stage 1", "pl": "Ptak etap 1",
+        "tr": "Bolum 1 kus", "sv": "Fagel bana 1", "no": "Fugl level 1", "da": "Fugl bane 1",
+        "ru": "Птица ур. 1",
+    },
+    "enemy_s2": {
+        "fr": "Oiseau stage 2", "en": "Stage 2 bird", "es": "Pajaro fase 2", "de": "Vogel Stage 2",
+        "it": "Uccello livello 2", "pt": "Passaro fase 2", "nl": "Vogel stage 2", "pl": "Ptak etap 2",
+        "tr": "Bolum 2 kus", "sv": "Fagel bana 2", "no": "Fugl level 2", "da": "Fugl bane 2",
+        "ru": "Птица ур. 2",
+    },
+    "enemy_s3": {
+        "fr": "Gargouille stage 3", "en": "Stage 3 gargoyle", "es": "Gargola fase 3", "de": "Gargoyle Stage 3",
+        "it": "Gargoyle livello 3", "pt": "Gargula fase 3", "nl": "Gargoyle stage 3", "pl": "Gargulec etap 3",
+        "tr": "Bolum 3 gargoil", "sv": "Gargoyle bana 3", "no": "Gargoyle level 3", "da": "Gargoyle bane 3",
+        "ru": "Горгулья ур. 3",
+    },
+    "enemy_s4": {
+        "fr": "Gargouille stage 4", "en": "Stage 4 gargoyle", "es": "Gargola fase 4", "de": "Gargoyle Stage 4",
+        "it": "Gargoyle livello 4", "pt": "Gargula fase 4", "nl": "Gargoyle stage 4", "pl": "Gargulec etap 4",
+        "tr": "Bolum 4 gargoil", "sv": "Gargoyle bana 4", "no": "Gargoyle level 4", "da": "Gargoyle bane 4",
+        "ru": "Горгулья ур. 4",
+    },
+    "enemy_boss": {
+        "fr": "Boss (coeur)", "en": "Boss (core)", "es": "Jefe (nucleo)", "de": "Boss (Kern)",
+        "it": "Boss (nucleo)", "pt": "Chefe (nucleo)", "nl": "Baas (kern)", "pl": "Boss (rdzen)",
+        "tr": "Boss (cekirdek)", "sv": "Boss (karna)", "no": "Boss (kjerne)", "da": "Boss (kerne)",
+        "ru": "Босс (ядро)",
+    },
+    "pts": {
+        "fr": "pts", "en": "pts", "es": "pts", "de": "Pkt", "it": "pti", "pt": "pts",
+        "nl": "pnt", "pl": "pkt", "tr": "pn", "sv": "p", "no": "p", "da": "p", "ru": "очк.",
+    },
+    "vet_note": {
+        "fr": "Veteran : oiseaux +10  /  boss 300",
+        "en": "Veteran : birds +10  /  boss 300",
+        "es": "Veterano : pajaros +10  /  jefe 300",
+        "de": "Veteran : Vogel +10  /  Boss 300",
+        "it": "Veterano : uccelli +10  /  boss 300",
+        "pt": "Veterano : passaros +10  /  chefe 300",
+        "nl": "Veteran : vogels +10  /  baas 300",
+        "pl": "Weteran : ptaki +10  /  boss 300",
+        "tr": "Veteran : kuslar +10  /  boss 300",
+        "sv": "Veteran : faglar +10  /  boss 300",
+        "no": "Veteran : fugler +10  /  boss 300",
+        "da": "Veteran : fugle +10  /  boss 300",
+        "ru": "Ветеран : птицы +10  /  босс 300",
+    },
+    "bonus_lives": {
+        "fr": "Vies bonus a 1337 et 8086 pts",
+        "en": "Bonus lives at 1337 and 8086 pts",
+        "es": "Vidas extra a 1337 y 8086 pts",
+        "de": "Bonusleben bei 1337 und 8086 Pkt",
+        "it": "Vite bonus a 1337 e 8086 pti",
+        "pt": "Vidas extra a 1337 e 8086 pts",
+        "nl": "Bonuslevens bij 1337 en 8086 pnt",
+        "pl": "Dodatkowe zycia przy 1337 i 8086",
+        "tr": "1337 ve 8086 puanda bonus can",
+        "sv": "Bonusliv vid 1337 och 8086 p",
+        "no": "Bonusliv ved 1337 og 8086 p",
+        "da": "Bonusliv ved 1337 og 8086 p",
+        "ru": "Бонус жизни на 1337 и 8086",
+    },
+}
+
+CREDITS = {
+    "dev_h": {
+        "fr": "DEVELOPPEMENT", "en": "DEVELOPMENT", "es": "DESARROLLO", "de": "ENTWICKLUNG",
+        "it": "SVILUPPO", "pt": "DESENVOLVIMENTO", "nl": "ONTWIKKELING", "pl": "ROZWOJ",
+        "tr": "GELISTIRME", "sv": "UTVECKLING", "no": "UTVIKLING", "da": "UDVIKLING",
+        "ru": "РАЗРАБОТКА",
+    },
+    "assist_h": {
+        "fr": "ASSISTANCE TECHNIQUE & DESIGN", "en": "TECHNICAL ASSISTANCE & DESIGN",
+        "es": "ASISTENCIA TECNICA Y DISENO", "de": "TECHNISCHE HILFE & DESIGN",
+        "it": "ASSISTENZA TECNICA E DESIGN", "pt": "ASSISTENCIA TECNICA E DESIGN",
+        "nl": "TECHNISCHE HULP & DESIGN", "pl": "WSPARCIE TECHNICZNE I DESIGN",
+        "tr": "TEKNIK DESTEK VE TASARIM", "sv": "TEKNISK HJAELP & DESIGN",
+        "no": "TEKNISK HJælp & DESIGN", "da": "TEKNISK HJAELP & DESIGN",
+        "ru": "ТЕХПОДДЕРЖКА И ДИЗАЙН",
+    },
+    "original_h": {
+        "fr": "JEU ORIGINAL", "en": "ORIGINAL GAME", "es": "JUEGO ORIGINAL", "de": "ORIGINALSPIEL",
+        "it": "GIOCO ORIGINALE", "pt": "JOGO ORIGINAL", "nl": "ORIGINEEL SPEL", "pl": "ORYGINALNA GRA",
+        "tr": "ORIJINAL OYUN", "sv": "ORIGINALSPEL", "no": "ORIGINALSPILL", "da": "ORIGINALSPIL",
+        "ru": "ОРИГИНАЛЬНАЯ ИГРА",
+    },
+    "music_h": {
+        "fr": "MUSIQUE", "en": "MUSIC", "es": "MUSICA", "de": "MUSIK", "it": "MUSICA",
+        "pt": "MUSICA", "nl": "MUZIEK", "pl": "MUZYKA", "tr": "MUZIK", "sv": "MUSIK",
+        "no": "MUSIKK", "da": "MUSIK", "ru": "МУЗЫКА",
+    },
+    "music_suno": {
+        "fr": "Creees avec Suno", "en": "Created with Suno", "es": "Creadas con Suno",
+        "de": "Erstellt mit Suno", "it": "Create con Suno", "pt": "Criadas com Suno",
+        "nl": "Gemaakt met Suno", "pl": "Stworzone z Suno", "tr": "Suno ile olusturuldu",
+        "sv": "Skapade med Suno", "no": "Laget med Suno", "da": "Lavet med Suno",
+        "ru": "Создано с помощью Suno",
+    },
+    "tech_h": {
+        "fr": "TECHNOLOGIE", "en": "TECHNOLOGY", "es": "TECNOLOGIA", "de": "TECHNOLOGIE",
+        "it": "TECNOLOGIA", "pt": "TECNOLOGIA", "nl": "TECHNOLOGIE", "pl": "TECHNOLOGIA",
+        "tr": "TEKNOLOJI", "sv": "TEKNIK", "no": "TEKNOLOGI", "da": "TEKNOLOGI",
+        "ru": "ТЕХНОЛОГИИ",
+    },
+    "tech_1": {
+        "fr": "Python 3  ·  Pygame 2", "en": "Python 3  ·  Pygame 2", "es": "Python 3  ·  Pygame 2",
+        "de": "Python 3  ·  Pygame 2", "it": "Python 3  ·  Pygame 2", "pt": "Python 3  ·  Pygame 2",
+        "nl": "Python 3  ·  Pygame 2", "pl": "Python 3  ·  Pygame 2", "tr": "Python 3  ·  Pygame 2",
+        "sv": "Python 3  ·  Pygame 2", "no": "Python 3  ·  Pygame 2", "da": "Python 3  ·  Pygame 2",
+        "ru": "Python 3  ·  Pygame 2",
+    },
+    "tech_2": {
+        "fr": "Rendu 2D software, delta-time fixe",
+        "en": "Software 2D rendering, fixed delta-time",
+        "es": "Render 2D por software, delta-time fijo",
+        "de": "Software-2D-Rendering, festes Delta-Time",
+        "it": "Rendering 2D software, delta-time fisso",
+        "pt": "Renderizacao 2D software, delta-time fixo",
+        "nl": "Software 2D-rendering, vaste delta-time",
+        "pl": "Render 2D software, staly delta-time",
+        "tr": "Yazilim 2D render, sabit delta-time",
+        "sv": "Mjukvaru-2D-render, fast delta-time",
+        "no": "Programvare 2D-rendering, fast delta-time",
+        "da": "Software 2D-rendering, fast delta-time",
+        "ru": "Программный 2D-рендер, фиксированный delta-time",
+    },
+    "tech_3": {
+        "fr": "Audio SDL_mixer  ·  WAV + MP3",
+        "en": "Audio SDL_mixer  ·  WAV + MP3",
+        "es": "Audio SDL_mixer  ·  WAV + MP3",
+        "de": "Audio SDL_mixer  ·  WAV + MP3",
+        "it": "Audio SDL_mixer  ·  WAV + MP3",
+        "pt": "Audio SDL_mixer  ·  WAV + MP3",
+        "nl": "Audio SDL_mixer  ·  WAV + MP3",
+        "pl": "Audio SDL_mixer  ·  WAV + MP3",
+        "tr": "Audio SDL_mixer  ·  WAV + MP3",
+        "sv": "Audio SDL_mixer  ·  WAV + MP3",
+        "no": "Audio SDL_mixer  ·  WAV + MP3",
+        "da": "Audio SDL_mixer  ·  WAV + MP3",
+        "ru": "Аудио SDL_mixer  ·  WAV + MP3",
+    },
+    "tech_4": {
+        "fr": "Entrees clavier & manette (hot-plug)",
+        "en": "Keyboard & gamepad input (hot-plug)",
+        "es": "Entrada teclado y mando (hot-plug)",
+        "de": "Tastatur- & Gamepad-Eingabe (Hot-Plug)",
+        "it": "Input tastiera e controller (hot-plug)",
+        "pt": "Entrada teclado e comando (hot-plug)",
+        "nl": "Toetsenbord- & controllerinvoer (hot-plug)",
+        "pl": "Klawiatura i pad (hot-plug)",
+        "tr": "Klavye ve kol girisi (hot-plug)",
+        "sv": "Tangentbord & handkontroll (hot-plug)",
+        "no": "Tastatur og kontroller (hot-plug)",
+        "da": "Tastatur og controller (hot-plug)",
+        "ru": "Клавиатура и геймпад (hot-plug)",
+    },
+    "tech_5": {
+        "fr": "Sprites generes / assets pixel art",
+        "en": "Generated sprites / pixel art assets",
+        "es": "Sprites generados / assets pixel art",
+        "de": "Generierte Sprites / Pixel-Art-Assets",
+        "it": "Sprite generati / asset pixel art",
+        "pt": "Sprites gerados / assets pixel art",
+        "nl": "Gegenereerde sprites / pixel art assets",
+        "pl": "Wygenerowane sprite'y / assety pixel art",
+        "tr": "Uretilmis sprite / pixel art varliklar",
+        "sv": "Genererade sprites / pixel art-tillgangar",
+        "no": "Genererte sprites / pixel art-ressurser",
+        "da": "Genererede sprites / pixel art-assets",
+        "ru": "Сгенерированные спрайты / pixel art",
+    },
+    "thanks_h": {
+        "fr": "REMERCIEMENTS", "en": "THANKS", "es": "AGRADECIMIENTOS", "de": "DANK",
+        "it": "RINGRAZIAMENTI", "pt": "AGRADECIMENTOS", "nl": "DANK", "pl": "PODZIEKOWANIA",
+        "tr": "TESEkkurLER", "sv": "TACK", "no": "TAKK", "da": "TAK", "ru": "БЛАГОДАРНОСТИ",
+    },
+    "thanks_1": {
+        "fr": "A tous les joueurs qui montent",
+        "en": "To every player who climbs",
+        "es": "A todos los jugadores que siguen subiendo",
+        "de": "An alle Spieler, die weiter aufsteigen",
+        "it": "A tutti i giocatori che salgono ancora",
+        "pt": "A todos os jogadores que sobem",
+        "nl": "Aan alle spelers die blijven klimmen",
+        "pl": "Dla wszystkich graczy, ktorzy wspinaja sie dalej",
+        "tr": "Bir stage daha cikan tum oyunculara",
+        "sv": "Till alla spelare som klättrar vidare",
+        "no": "Til alle spillere som klatrer videre",
+        "da": "Til alle spillere der klatrer videre",
+        "ru": "Всем игрокам, что идут ещё на этап",
+    },
+    "thanks_2": {
+        "fr": "encore un stage de plus",
+        "en": "one more stage",
+        "es": "un stage mas",
+        "de": "noch eine Stage weiter",
+        "it": "ancora un livello",
+        "pt": "mais um stage",
+        "nl": "nog een stage verder",
+        "pl": "jeszcze jeden etap",
+        "tr": "bir stage daha",
+        "sv": "en bana till",
+        "no": "en level til",
+        "da": "en bane mere",
+        "ru": "ещё один уровень",
+    },
+    "license_h": {
+        "fr": "LICENCE", "en": "LICENSE", "es": "LICENCIA", "de": "LIZENZ", "it": "LICENZA",
+        "pt": "LICENCA", "nl": "LICENTIE", "pl": "LICENCJA", "tr": "LISANS", "sv": "LICENS",
+        "no": "LISENS", "da": "LICENS", "ru": "ЛИЦЕНЗИЯ",
+    },
+    "license_b": {
+        "fr": "Free to play  ·  Open source",
+        "en": "Free to play  ·  Open source",
+        "es": "Gratis  ·  Codigo abierto",
+        "de": "Kostenlos  ·  Open Source",
+        "it": "Gratuito  ·  Open source",
+        "pt": "Gratis  ·  Codigo aberto",
+        "nl": "Gratis te spelen  ·  Open source",
+        "pl": "Darmowa  ·  Open source",
+        "tr": "Ucretsiz  ·  Acik kaynak",
+        "sv": "Gratis  ·  Oppen kallkod",
+        "no": "Gratis  ·  Apen kildekode",
+        "da": "Gratis  ·  Open source",
+        "ru": "Бесплатно  ·  Открытый код",
+    },
+    "tagline": {
+        "fr": "No quarter given. No continue forever.",
+        "en": "No quarter given. No continue forever.",
+        "es": "Sin cuartel. Sin continues eternos.",
+        "de": "Keine Gnade. Kein endloses Continue.",
+        "it": "Nessuna pieta. Nessun continue eterno.",
+        "pt": "Sem misericordia. Sem continues eternos.",
+        "nl": "Geen genade. Geen eindeloze continues.",
+        "pl": "Bez litosci. Bez wiecznych continue.",
+        "tr": "Merhamet yok. Sonsuz continue yok.",
+        "sv": "Ingen nad. Inga andlosa continues.",
+        "no": "Ingen nade. Ingen evige continues.",
+        "da": "Ingen nade. Ingen uendelige continues.",
+        "ru": "Без пощады. Без вечных continue.",
+    },
+}
+
+def t_credits(key):
+    entry = CREDITS.get(key)
+    if not entry:
+        return key
+    return entry.get(_lang) or entry.get("en") or key
+
+def get_credits_lines():
+    """Build credits scroll lines for current language."""
+    return [
+        ("title", "PHENIX REBIRTH"),
+        ("sub", t("subtitle")),
+        ("blank", ""),
+        ("header", t_credits("dev_h")),
+        ("body", "Franck Fornasari (Kraran)"),
+        ("blank", ""),
+        ("header", t_credits("assist_h")),
+        ("body", "Grok  —  xAI"),
+        ("blank", ""),
+        ("header", t_credits("original_h")),
+        ("body", "Phoenix (1978 / 1980)"),
+        ("body", "Amstar Electronics / Centuri / Taito"),
+        ("blank", ""),
+        ("header", t_credits("music_h")),
+        ("body", "Phenix — Eternal Dawn"),
+        ("body", "Phenix — Eternal Dawn (Game Over)"),
+        ("body", t_credits("music_suno")),
+        ("blank", ""),
+        ("header", t_credits("tech_h")),
+        ("body", t_credits("tech_1")),
+        ("body", t_credits("tech_2")),
+        ("body", t_credits("tech_3")),
+        ("body", t_credits("tech_4")),
+        ("body", t_credits("tech_5")),
+        ("blank", ""),
+        ("header", t_credits("thanks_h")),
+        ("body", t_credits("thanks_1")),
+        ("body", t_credits("thanks_2")),
+        ("blank", ""),
+        ("header", t_credits("license_h")),
+        ("body", t_credits("license_b")),
+        ("blank", ""),
+        ("sub", t_credits("tagline")),
+        ("blank", ""),
+        ("blank", ""),
+        ("body", t("press_any")),
+    ]
+
+_lang = "fr"
+
+def set_lang(code):
+    global _lang
+    if code in LANG_CODES:
+        _lang = code
+    else:
+        _lang = "fr"
+
+def get_lang():
+    return _lang
+
+def t(key):
+    entry = T.get(key)
+    if not entry:
+        return key
+    return entry.get(_lang) or entry.get("en") or key
+
+def t_list(section):
+    """Return list of lines for HELP scenario/howto/controls."""
+    entry = HELP.get(section)
+    if not entry:
+        return []
+    if isinstance(entry, dict) and _lang in entry and isinstance(entry[_lang], list):
+        return entry[_lang]
+    if isinstance(entry, dict) and "en" in entry and isinstance(entry["en"], list):
+        return entry["en"]
+    return []
+
+def t_help(key):
+    entry = HELP.get(key)
+    if not entry:
+        return key
+    if isinstance(entry, dict):
+        val = entry.get(_lang) or entry.get("en") or key
+        if isinstance(val, list):
+            return val
+        return val
+    return key
