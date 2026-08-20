@@ -13,8 +13,13 @@ Run:
 import sys
 import os
 
-# Allow imports from the src/ package next to this file
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+# Allow imports from the src/ package (dev) or bundled src (PyInstaller)
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    _root = sys._MEIPASS
+else:
+    _root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_root, "src"))
+sys.path.insert(0, _root)
 
 from game import Game
 
@@ -26,7 +31,6 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception:
-        # Surface the traceback for bug reports, then non-zero exit
         import traceback
         traceback.print_exc()
         sys.exit(1)

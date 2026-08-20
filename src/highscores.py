@@ -9,7 +9,8 @@ Default board is seeded with KRA / FFC / GRK for first launch.
 import json
 import os
 
-HS_FILE = os.path.join(os.path.dirname(__file__), "..", "highscores.json")
+from settings import user_data_dir
+HS_FILE = os.path.join(user_data_dir(), "highscores.json")
 MAX_ENTRIES = 15
 
 DEFAULT_SCORES = [

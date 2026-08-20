@@ -1,12 +1,37 @@
 """
 Global constants and stage progression helpers.
 
+Also exposes project_root() / user_data_dir() for assets and save files,
+compatible with PyInstaller frozen builds.
+
 Resolution is fixed at an internal 1280x720 logical canvas, then scaled
 to the window / fullscreen display. Movement and combat use delta-time
 so the game feels the same at 60 Hz or 120 Hz.
 """
 # Phenix Rebirth - Settings
 # Ultra-responsive action game settings
+
+import os
+import sys
+
+
+def project_root():
+    """Read-only game data root (assets). Inside PyInstaller one-folder/onefile extract dir."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def user_data_dir():
+    """Writable directory for settings.json / highscores.json (next to the .exe when frozen)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return project_root()
+
+
+def asset_path(*parts):
+    """Join path under project_root/assets/..."""
+    return os.path.join(project_root(), "assets", *parts)
 
 # Display
 BASE_WIDTH = 1280

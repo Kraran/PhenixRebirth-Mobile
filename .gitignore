@@ -37,3 +37,4 @@ builds/
 
 # Logs
 *.log
+*.spec

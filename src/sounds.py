@@ -8,8 +8,9 @@ menu theme, game-over theme, and in-game silence.
 import pygame
 import os
 
-SOUND_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
-MUSIC_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "music")
+from settings import asset_path
+SOUND_DIR = asset_path("sounds")
+MUSIC_DIR = asset_path("music")
 
 class SoundManager:
     FADE_MS = 350  # quick crossfade

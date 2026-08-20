@@ -29,7 +29,8 @@ from sounds import SoundManager
 from i18n import set_lang, get_lang, t, t_help, t_list, get_credits_lines, LANGS, LANG_CODES
 from highscores import load_highscores, is_highscore, insert_score, reset_highscores
 
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
+from settings import user_data_dir, asset_path
+SETTINGS_FILE = os.path.join(user_data_dir(), "settings.json")
 
 def load_user_settings():
     defaults = {
@@ -142,7 +143,7 @@ class Game:
         self.logo_timer = 0.0
         self.logo_index = 0
         self.logo_fps = 12.0
-        logo_dir = os.path.join(os.path.dirname(__file__), "..", "assets", "logo")
+        logo_dir = asset_path("logo")
         if os.path.isdir(logo_dir):
             for name in sorted(os.listdir(logo_dir)):
                 if name.endswith(".png"):
@@ -166,7 +167,7 @@ class Game:
         
         # Mini ship icon for lives display
         ship_full = pygame.image.load(
-            os.path.join(os.path.dirname(__file__), "..", "assets", "sprites", "player_ship.png")
+            asset_path("sprites", "player_ship.png")
         ).convert_alpha()
         mini_h = 22
         scale = mini_h / ship_full.get_height()

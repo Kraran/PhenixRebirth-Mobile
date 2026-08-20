@@ -9,6 +9,7 @@ Scoring is handled by the Game class (difficulty may add a veteran bonus).
 """
 import pygame
 import os
+from settings import asset_path
 import math
 import random
 from settings import *
@@ -98,7 +99,7 @@ class Enemy:
 
     def _load_bird_frames(self, stage=1):
         """Animated bird frames: stage1 blue-grey, stage2 green/khaki."""
-        base = os.path.join(os.path.dirname(__file__), "..", "assets", "sprites")
+        base = asset_path("sprites")
         prefix = "bird2" if stage >= 2 else "bird1"
         names = [
             f"{prefix}_flap0.png",
@@ -496,7 +497,7 @@ class BigBird:
 
     def _load_garg_sprites(self, stage=3):
         """Load mechanical bat art — stage 3 grey, stage 4 violet/dark red."""
-        base = os.path.join(os.path.dirname(__file__), "..", "assets", "sprites")
+        base = asset_path("sprites")
         prefix = "garg4" if stage >= 4 else "garg3"
         try:
             self.body_img = pygame.image.load(os.path.join(base, f"{prefix}_body.png")).convert_alpha()

@@ -10,8 +10,9 @@ import math
 import os
 from settings import *
 
-NEBULA_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "sprites", "nebulae")
-PLANET_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "sprites", "planets")
+from settings import asset_path
+NEBULA_DIR = asset_path("sprites", "nebulae")
+PLANET_DIR = asset_path("sprites", "planets")
 
 NEBULA_FILES = [
     "galaxy_andromeda.png",

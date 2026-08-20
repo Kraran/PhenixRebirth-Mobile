@@ -11,7 +11,8 @@ import math
 import random
 from settings import *
 
-SHIP_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "sprites", "player_ship.png")
+from settings import asset_path
+SHIP_PATH = asset_path("sprites", "player_ship.png")
 
 class Player:
     def __init__(self, x, y):
