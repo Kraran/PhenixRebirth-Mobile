@@ -33,4 +33,9 @@ if __name__ == "__main__":
     except Exception:
         import traceback
         traceback.print_exc()
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
         sys.exit(1)

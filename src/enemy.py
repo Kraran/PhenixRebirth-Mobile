@@ -731,11 +731,17 @@ class BigBird:
         self.shoot_cooldown = 0.17
 
     def get_body_hitbox(self):
+        """Torso hitbox — generous enough that shots can't slip past the silhouette."""
         if self.dying or not self.alive:
             return pygame.Rect(0, 0, 0, 0)
         bw = self.body_img.get_width()
         bh = self.body_img.get_height()
-        return pygame.Rect(int(self.x - bw * 0.28), int(self.y - bh * 0.35), int(bw * 0.56), int(bh * 0.7))
+        return pygame.Rect(
+            int(self.x - bw * 0.42),
+            int(self.y - bh * 0.45),
+            int(bw * 0.84),
+            int(bh * 0.90),
+        )
 
     def get_left_wing_hitbox(self):
         if not self.wing_left or self.dying or not self.alive:
@@ -743,7 +749,13 @@ class BigBird:
         ww = self.wing_up.get_width()
         wh = self.wing_up.get_height()
         bw = self.body_img.get_width()
-        return pygame.Rect(int(self.x - bw // 2 - ww + 10), int(self.y - wh * 0.4), int(ww * 0.85), int(wh * 0.7))
+        # Overlap slightly into the body so no gap between wing and torso
+        return pygame.Rect(
+            int(self.x - bw // 2 - ww + 2),
+            int(self.y - wh * 0.48),
+            int(ww * 0.98),
+            int(wh * 0.88),
+        )
 
     def get_right_wing_hitbox(self):
         if not self.wing_right or self.dying or not self.alive:
@@ -751,7 +763,12 @@ class BigBird:
         ww = self.wing_up.get_width()
         wh = self.wing_up.get_height()
         bw = self.body_img.get_width()
-        return pygame.Rect(int(self.x + bw // 2 - 10), int(self.y - wh * 0.4), int(ww * 0.85), int(wh * 0.7))
+        return pygame.Rect(
+            int(self.x + bw // 2 - ww * 0.05),
+            int(self.y - wh * 0.48),
+            int(ww * 0.98),
+            int(wh * 0.88),
+        )
 
     def get_hitbox(self):
         if self.dying or not self.alive:

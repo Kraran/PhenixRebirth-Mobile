@@ -162,11 +162,37 @@ T = {
         "pt": "Ecran", "nl": "Weergave", "pl": "Wyswietlacz", "tr": "Gorunum", "sv": "Skarm",
         "no": "Skjerm", "da": "Skarm", "ru": "Экран",
     },
+    "opt_monitor": {
+        "fr": "Moniteur", "en": "Monitor", "es": "Monitor", "de": "Monitor",
+        "it": "Monitor", "pt": "Monitor", "nl": "Monitor", "pl": "Monitor",
+        "tr": "Monitor", "sv": "Monitor", "no": "Monitor", "da": "Monitor", "ru": "Монитор",
+    },
+    "opt_bezel": {
+        "fr": "Bezel", "en": "Bezel", "es": "Marco", "de": "Bezel",
+        "it": "Cornice", "pt": "Moldura", "nl": "Bezel", "pl": "Ramka",
+        "tr": "Cerceve", "sv": "Ram", "no": "Ramme", "da": "Ramme", "ru": "Рамка",
+    },
+    "bezel_off": {
+        "fr": "Desactive", "en": "Off", "es": "Desactivado", "de": "Aus",
+        "it": "Disattivo", "pt": "Desligado", "nl": "Uit", "pl": "Wyl.",
+        "tr": "Kapali", "sv": "Av", "no": "Av", "da": "Fra", "ru": "Выкл.",
+    },
+    "bezel_phoenix": {
+        "fr": "Phenix", "en": "Phoenix", "es": "Fenix", "de": "Phoenix",
+        "it": "Fenice", "pt": "Fenix", "nl": "Phoenix", "pl": "Feniks",
+        "tr": "Anka", "sv": "Fenix", "no": "Fenix", "da": "Fenix", "ru": "Феникс",
+    },
     "opt_fps": {
         "fr": "Compteur FPS", "en": "FPS Counter", "es": "Contador FPS", "de": "FPS-Zahler",
         "it": "Contatore FPS", "pt": "Contador FPS", "nl": "FPS-teller", "pl": "Licznik FPS",
         "tr": "FPS Sayaci", "sv": "FPS-raknare", "no": "FPS-teller", "da": "FPS-taeller",
         "ru": "Счётчик FPS",
+    },
+    "opt_scanlines": {
+        "fr": "Scanlines", "en": "Scanlines", "es": "Lineas de barrido", "de": "Scanlines",
+        "it": "Scanline", "pt": "Scanlines", "nl": "Scanlines", "pl": "Linie skanowania",
+        "tr": "Tarama cizgileri", "sv": "Scanlines", "no": "Scanlines", "da": "Scanlines",
+        "ru": "Развёртка",
     },
     "opt_language": {
         "fr": "Langue", "en": "Language", "es": "Idioma", "de": "Sprache", "it": "Lingua",
@@ -898,6 +924,7 @@ def get_credits_lines():
         ("header", t_credits("music_h")),
         ("body", "Phenix — Eternal Dawn"),
         ("body", "Phenix — Eternal Dawn (Game Over)"),
+        ("body", "Phenix — Last Coin (Credits)"),
         ("body", t_credits("music_suno")),
         ("blank", ""),
         ("header", t_credits("tech_h")),

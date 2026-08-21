@@ -1,6 +1,15 @@
 # Roadmap — Phenix Rebirth
 
-Current release: **v0.1.0**
+Current: **v0.2.0-rc.1** (Release Candidate)
+
+## Done in 0.2.0-rc.1
+
+- PHENIX transform mode (gauge, morph anim, dual fire, cancel + cooldown)
+- New player ship + firebird / morph sprites
+- Boss core redesign; updated enemy art (birds, gargoyles)
+- CRT scanlines (3 levels) in Options
+- Collision / difficulty / pause-quit fixes
+- Credits music (*Last Coin*)
 
 ## Done in 0.1.0
 
@@ -13,16 +22,16 @@ Current release: **v0.1.0**
 
 ### Play & feel
 - [ ] Native **144 Hz** path (alongside 60 / 120)
-- [ ] Optional **scanlines** / CRT-style filter
 - [ ] Fine-tune attract AI and stage balance
+- [ ] Extra bezel styles
 
 ### Packaging
-- [ ] One-click Windows build (PyInstaller / similar)
+- [ ] Polished one-click Windows build (PyInstaller)
 - [ ] Linux package notes
 - [ ] Optional itch.io / GameJolt page
 
 ### Code health
-- [ ] Split `src/game.py` into menus / combat modules (post-0.1)
+- [ ] Split `src/game.py` into menus / combat modules
 - [ ] Broader automated tests beyond syntax CI
 
 ### Meta

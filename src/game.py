@@ -18,6 +18,7 @@ import sys
 import random
 import os
 import json
+from datetime import datetime
 from settings import *
 from settings import stage_content, stage_speed_mult
 from player import Player
@@ -40,6 +41,9 @@ def load_user_settings():
         "music_volume": 0.4,
         "language": "fr",
         "show_fps": False,
+        "scanlines": 0,  # 0=off, 1/2/3 intensity
+        "bezel_style": "phoenix",  # off | phoenix | (future styles)
+        "monitor_index": 0,
     }
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -56,6 +60,25 @@ def save_user_settings(data):
     except Exception as e:
         print("Could not save settings:", e)
 
+class TextCache:
+    """Cache font.render results — rebuild only when (font, text, color) changes."""
+    __slots__ = ("_data",)
+
+    def __init__(self):
+        self._data = {}
+
+    def get(self, font, text, color):
+        key = (id(font), text, color)
+        surf = self._data.get(key)
+        if surf is None:
+            surf = font.render(str(text), True, color)
+            self._data[key] = surf
+        return surf
+
+    def clear(self):
+        self._data.clear()
+
+
 class Game:
     """
     Top-level application object.
@@ -63,24 +86,50 @@ class Game:
     Lifecycle: __init__ (load settings, build systems) → run() event/update/draw loop.
     Soft restart after a run re-enters __init__ while preserving user settings.
     """
-    def __init__(self):
-        pygame.init()
-        
-        flags = pygame.DOUBLEBUF | pygame.HWSURFACE
-        if VSYNC:
-            flags |= pygame.SCALED
-            
-        self.screen = pygame.display.set_mode((BASE_WIDTH, BASE_HEIGHT), flags)
-        self.clock = pygame.time.Clock()
-        
-        # Detect 60 or 120 Hz after display is up (144 later)
-        import settings as _settings
-        self.fps_target = detect_refresh_rate()
-        _settings.FPS_TARGET = self.fps_target
-        pygame.display.set_caption(f"Phenix Rebirth  [{self.fps_target} Hz]")
-        
-        # Opaque game surface (faster blit than per-pixel alpha default)
-        self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT)).convert()
+    def __init__(self, soft=False):
+        """soft=True: reset session state without recreating the window (no desktop flash)."""
+        if not soft:
+            pygame.init()
+            # Load display prefs early so the FIRST (and only) window is correct
+            try:
+                early = load_user_settings()
+                self.monitor_index = int(early.get("monitor_index", 0) or 0)
+                if self.monitor_index < 0:
+                    self.monitor_index = 0
+                self.display_mode = early.get("display_mode", "fullscreen") or "fullscreen"
+                if self.display_mode not in ("window", "fullscreen", "borderless"):
+                    self.display_mode = "fullscreen"
+                self.bezel_style = early.get("bezel_style", "phoenix") or "phoenix"
+            except Exception:
+                self.monitor_index = 0
+                self.display_mode = "fullscreen"
+                self.bezel_style = "phoenix"
+            self.clock = pygame.time.Clock()
+            self.view_rect = pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT)
+            self.bezel_active = False
+            self._bezel_stars = []
+            self.bezel_left_img = None
+            self.bezel_right_img = None
+            self._bezel_blit_left = None
+            self._bezel_blit_right = None
+            self._bezel_cache_key = None
+            self._present_size = None
+            self._scaled_game_buf = None
+            # ONE set_mode only — double set_mode crashes some Intel/SDL multi-monitor setups
+            self._prepare_monitor_env()
+            self._open_display()
+            self._display_ready = True
+            try:
+                self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT)).convert()
+            except Exception:
+                self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT))
+            import settings as _settings
+            self.fps_target = detect_refresh_rate()
+            _settings.FPS_TARGET = self.fps_target
+            try:
+                pygame.display.set_caption(f"Phenix Rebirth  [{self.fps_target} Hz]")
+            except Exception:
+                pass
         
         self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
         self.formation = EnemyFormation()
@@ -113,6 +162,7 @@ class Game:
         self.cheat_msg_timer = 0.0
         self.cheat_msg = ""
         self.used_cheat = False
+        self.phenix_cheat = False
         self.paused = False
         self.pause_index = 0  # Reprendre
         self.pause_options = False  # options opened from pause
@@ -137,6 +187,9 @@ class Game:
         self.font = pygame.font.SysFont(_font_names, 28, bold=True)
         self.big_font = pygame.font.SysFont(_font_names, 64, bold=True)
         self.medium_font = pygame.font.SysFont(_font_names, 32, bold=True)
+        self.text_cache = TextCache()
+        self._fps_display = 0
+        self._fps_timer = 0.0
 
         # Animated title logo (frame sequence from LogoPhenix.mp4)
         self.logo_frames = []
@@ -186,7 +239,9 @@ class Game:
         # Menu state: "main" | "options"
         self.menu_screen = "main"
         self.menu_index = 0
-        self.difficulty = "normal"  # novice | normal | veteran — never persisted
+        # Difficulty is session-only (not in settings.json) but must survive soft resets
+        if not hasattr(self, "difficulty"):
+            self.difficulty = "normal"  # novice | normal | veteran
         self.DIFFICULTIES = ["novice", "normal", "veteran"]
         self.DIFF_LABELS = {"novice": "Novice", "normal": "Normal", "veteran": "Veteran"}
         
@@ -212,6 +267,29 @@ class Game:
             set_lang(self.language)
         if not hasattr(self, "show_fps"):
             self.show_fps = bool(user.get("show_fps", False))  # default off
+        if not hasattr(self, "scanlines"):
+            raw = user.get("scanlines", 0)
+            # Migrate old bool settings
+            if isinstance(raw, bool):
+                self.scanlines = 1 if raw else 0
+            else:
+                try:
+                    self.scanlines = max(0, min(3, int(raw)))
+                except Exception:
+                    self.scanlines = 0
+        self._scanline_surf = None
+        self._scanline_level_cached = None
+        if not hasattr(self, "bezel_style"):
+            self.bezel_style = user.get("bezel_style", "phoenix")
+            if self.bezel_style not in ("off", "phoenix"):
+                self.bezel_style = "phoenix"
+        if not hasattr(self, "monitor_index"):
+            self.monitor_index = int(user.get("monitor_index", 0) or 0)
+        # Registry of available bezels (id → left/right asset names). Extend later.
+        self.BEZEL_STYLES = [
+            ("off", "bezel_off"),
+            ("phoenix", "bezel_phoenix"),
+        ]
         
         # Joystick menu navigation cooldown (anti spam)
         self._joy_menu_cooldown = 0.0
@@ -219,15 +297,25 @@ class Game:
         self._joy_axis_latch_x = 0
         self._joy_axis_latch_y = 0
         
-        self.sounds = SoundManager()
+        if not soft or not getattr(self, "sounds", None):
+            self.sounds = SoundManager()
         self.sounds.set_master_volume(self.sfx_volume)
         self.sounds.set_music_volume(self.music_volume)
-        self._build_help_icons()
+        if not soft or not getattr(self, "help_icons", None):
+            self._build_help_icons()
+        if not soft or not getattr(self, "bezel_left_img", None):
+            self._load_bezel_images()
         self.player.sounds = self.sounds
         self.formation.sounds = self.sounds
         
-        # Apply saved display mode (default fullscreen)
-        self.apply_display_mode()
+        # Display already opened once in boot (_open_display). Only layout/bezel finalize.
+        if not soft:
+            try:
+                self._layout_viewport()
+                if getattr(self, "bezel_active", False):
+                    self._ensure_bezel_cache()
+            except Exception as e:
+                print("post-boot layout failed:", e)
 
     # --- Audio state machine (menu / game-over / in-game silence) ---
     def _update_music(self):
@@ -237,12 +325,130 @@ class Game:
         elif not self.started:
             if self.menu_screen == "highscores":
                 self.sounds.play_music("gameover")
+            elif self.menu_screen == "credits":
+                self.sounds.play_music("credits")
             else:
-                self.sounds.play_music("menu")  # includes credits
+                self.sounds.play_music("menu")
         else:
             self.sounds.stop_music()
 
     # --- Difficulty & scoring helpers ---
+
+
+    def _activate_phenix_from_input(self):
+        """Toggle Phenix: activate if ready, or cancel early (keep remaining gauge)."""
+        if not self.started or self.paused or self.game_over or self.attract_mode:
+            return
+        if self.stage_transition is not None:
+            return
+        if not self.player:
+            return
+        if self.player.is_phenix:
+            if self.player.cancel_phenix():
+                self.shake_amount = max(self.shake_amount, 3.0)
+            return
+        if self.player.try_activate_phenix():
+            self.shake_amount = max(self.shake_amount, 4.0)
+
+
+    def _draw_cheat_message(self):
+        """Centered, large, readable cheat / stage / 1UP banner."""
+        if self.cheat_msg_timer <= 0 or not self.cheat_msg:
+            return
+        pulse = 0.55 + 0.45 * abs(math.sin(self.cheat_msg_timer * 5.0))
+        msg = self.cheat_msg
+        # Color by type
+        if msg.startswith("1UP") or "1UP" in msg.upper():
+            blink = int(self.cheat_msg_timer * 5) % 2 == 0
+            col = (255, 255, 180) if blink else (255, 200, 60)
+        elif "PHENIX" in msg.upper() or "PHEN" in msg.upper():
+            col = (255, int(140 + 80 * pulse), 40)
+        elif "LIVE" in msg.upper() or "INFINITE" in msg.upper():
+            col = (120, 255, 160)
+        elif msg.startswith("STAGE"):
+            col = (180, 200, 255)
+        else:
+            col = (255, 220, 100)
+
+        cm = self.big_font.render(msg, True, col)
+        cx = BASE_WIDTH // 2
+        cy = BASE_HEIGHT // 2
+        # Dark plate behind for readability
+        pad_x, pad_y = 28, 16
+        plate = pygame.Surface((cm.get_width() + pad_x * 2, cm.get_height() + pad_y * 2), pygame.SRCALPHA)
+        pygame.draw.rect(plate, (0, 0, 0, 160), plate.get_rect(), border_radius=8)
+        self.game_surface.blit(plate, (cx - plate.get_width() // 2, cy - plate.get_height() // 2))
+        # Glow
+        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1)):
+            g = self.big_font.render(msg, True, col)
+            g.set_alpha(int(50 + 60 * pulse))
+            self.game_surface.blit(g, (cx - cm.get_width() // 2 + ox, cy - cm.get_height() // 2 + oy))
+        self.game_surface.blit(cm, (cx - cm.get_width() // 2, cy - cm.get_height() // 2))
+
+    def _draw_phenix_gauge(self):
+        """HUD: 10-segment Phenix gauge (left side) + fire around label from level 3."""
+        if not hasattr(self, "player") or self.player is None:
+            return
+        gauge = float(getattr(self.player, "phenix_gauge", 0))
+        level = int(gauge)  # for label threshold
+        gx, gy = 18, 100
+        seg_w, seg_h, gap = 14, 10, 3
+        total_h = 10 * (seg_h + gap)
+        pygame.draw.rect(self.game_surface, (20, 20, 35), (gx - 3, gy - 3, seg_w + 6, total_h + 3), border_radius=3)
+        active = getattr(self.player, "is_phenix", False)
+        for i in range(10):
+            y = gy + (9 - i) * (seg_h + gap)
+            # How much of this segment is filled (supports fractional drain)
+            seg_fill = max(0.0, min(1.0, gauge - i))
+            if seg_fill > 0:
+                t = (i + 1) / 10.0
+                if active:
+                    col = (255, int(140 + 80 * t), int(30 + 20 * t))
+                else:
+                    col = (
+                        int(255 * min(1.0, 0.5 + t * 0.5)),
+                        int(80 + 100 * t),
+                        int(40 * (1.0 - t)),
+                    )
+                fh = max(1, int(seg_h * seg_fill))
+                pygame.draw.rect(
+                    self.game_surface, col,
+                    (gx, y + (seg_h - fh), seg_w, fh),
+                    border_radius=2,
+                )
+            else:
+                pygame.draw.rect(self.game_surface, (40, 40, 55), (gx, y, seg_w, seg_h), border_radius=2)
+
+        lab_x = gx - 2
+        lab_y = gy + total_h + 6
+        tc = self.text_cache
+        if level >= 3:
+            # Quantize pulse so text surfaces stay cached (looks the same)
+            ticks = pygame.time.get_ticks() * 0.001
+            pulse = 0.75 + 0.25 * abs(math.sin(ticks * 4.0))
+            power = (level - 3) / 7.0
+            # 8 color steps instead of continuous unique RGB each frame
+            g_q = int((140 + 80 * power * pulse) // 8) * 8
+            b_q = int((40 + 40 * power) // 8) * 8
+            lab = tc.get(self.font, "PHENIX", (255, g_q, b_q))
+            glow_g = int((100 + 60 * power) // 8) * 8
+            glow = tc.get(self.font, "PHENIX", (255, glow_g, 20))
+            alpha = int(50 + 40 * power * pulse)
+            glow.set_alpha(alpha)
+            for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                self.game_surface.blit(glow, (lab_x + ox, lab_y + oy))
+            self.game_surface.blit(lab, (lab_x, lab_y))
+        else:
+            lab = tc.get(self.font, "PHENIX", (120, 110, 100))
+            self.game_surface.blit(lab, (lab_x, lab_y))
+
+        num_col = (255, 220, 160) if level >= 3 or active else (140, 140, 150)
+        num = tc.get(self.font, str(int(round(gauge))), num_col)
+        self.game_surface.blit(num, (gx + seg_w // 2 - num.get_width() // 2, gy - 18))
+
+
+
+
 
     @staticmethod
     def format_score(n):
@@ -299,15 +505,28 @@ class Game:
 
     def _apply_difficulty_start(self):
         """Lives and stage 1 setup when pressing JOUER."""
+        if self.difficulty == "novice":
+            self.player.phenix_sec_per_point = 1.0
+            self.player.phenix_min_gauge = 1
+            self.player.phenix_gauge = 1
+        else:
+            self.player.phenix_sec_per_point = 0.6
+            self.player.phenix_min_gauge = 0
+        if self.phenix_cheat:
+            self.player.phenix_auto_refill = True
+            self.player.phenix_gauge = 10
         if self.player.infinite_lives:
             self.player.lives = 99
-            self.used_cheat = True
         elif self.difficulty == "novice":
             self.player.lives = 5
-            self.used_cheat = False
         else:
             self.player.lives = 3
-            self.used_cheat = False
+        # Any active cheat (LVL / LIVE / PHEN) blocks high scores + shows banner
+        self.used_cheat = bool(
+            self.phenix_cheat
+            or getattr(self.player, "infinite_lives", False)
+            or getattr(self.player, "phenix_auto_refill", False)
+        )
         self.bosses_defeated = 0
         self.life_flash_timer = 0.0
         self.life_flash_index = -1
@@ -324,7 +543,7 @@ class Game:
                     self.player.lives += 1
                     self.sounds.play("1up")
                     self.cheat_msg = t("one_up")
-                    self.cheat_msg_timer = 4.0
+                    self.cheat_msg_timer = 5.0
                     self.life_flash_timer = 4.0
                     self.life_flash_index = max(0, self.player.lives - 1)
 
@@ -364,7 +583,7 @@ class Game:
         self.input_grace = 0.4
         self.cheat_buffer = ""
         self.cheat_msg = f"STAGE {stage}"
-        self.cheat_msg_timer = 2.0
+        self.cheat_msg_timer = 5.0
         self.used_cheat = True
         self.bosses_defeated = max(0, (stage - 1) // 5)
         self._setup_stage(stage)
@@ -379,7 +598,9 @@ class Game:
         self.shake_amount = 0.0
         self.explosions.clear()  # remove explosion remnants from HS screen
         # Novice / cheat: view table only, no name entry
-        if self.difficulty == "novice" or getattr(self, "used_cheat", False):
+        if (self.difficulty == "novice"
+                or getattr(self, "used_cheat", False)
+                or getattr(self, "phenix_cheat", False)):
             self.hs_phase = "table"
         elif is_highscore(self.score, self.hs_entries):
             self.hs_phase = "enter"
@@ -403,25 +624,399 @@ class Game:
         idx = (idx + direction) % len(alphabet)
         self.hs_name[self.hs_char_index] = alphabet[idx]
 
-    def apply_display_mode(self):
-        """Switch window / fullscreen / borderless."""
-        flags = pygame.DOUBLEBUF | pygame.HWSURFACE
-        size = (BASE_WIDTH, BASE_HEIGHT)
-        if self.display_mode == "fullscreen":
-            flags |= pygame.FULLSCREEN
-            if VSYNC:
-                flags |= pygame.SCALED
-        elif self.display_mode == "borderless":
-            flags |= pygame.NOFRAME
-            if VSYNC:
-                flags |= pygame.SCALED
+
+
+    def _load_bezel_images(self):
+        """Load left/right arcade bezel artwork (ultrawide side panels)."""
+        self.bezel_left_img = None
+        self.bezel_right_img = None
+        try:
+            lp = asset_path("sprites", "bezel_left.png")
+            rp = asset_path("sprites", "bezel_right.png")
+            if os.path.exists(lp):
+                self.bezel_left_img = pygame.image.load(lp).convert()
+            if os.path.exists(rp):
+                self.bezel_right_img = pygame.image.load(rp).convert()
+            self._invalidate_present_cache()
+        except Exception as e:
+            print("Bezel images not loaded:", e)
+
+    def _layout_viewport(self):
+        """Center the 16:9 game area in the real window.
+
+        Bezel art only in fullscreen on displays wider than 16:9.
+        Windowed and borderless: never bezel (letterbox black only if needed).
+        """
+        if not getattr(self, "screen", None):
+            return
+        mode = getattr(self, "display_mode", "window")
+        sw, sh = self.screen.get_size()
+        if mode == "window" or sh <= 0 or sw <= 0:
+            self.view_rect = pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT)
+            self.bezel_active = False
+            return
+
+        scale = min(sw / float(BASE_WIDTH), sh / float(BASE_HEIGHT))
+        gw = max(1, int(BASE_WIDTH * scale))
+        gh = max(1, int(BASE_HEIGHT * scale))
+        target_aspect = BASE_WIDTH / float(BASE_HEIGHT)
+        if gw / float(max(1, gh)) > target_aspect:
+            gw = max(1, int(gh * target_aspect))
         else:
-            if VSYNC:
-                flags |= pygame.SCALED
-        self.screen = pygame.display.set_mode(size, flags)
-        pygame.display.set_caption(f"Phenix Rebirth  [{self.fps_target} Hz]")
-        # Hide cursor in fullscreen / borderless
-        pygame.mouse.set_visible(self.display_mode == "window")
+            gh = max(1, int(gw / target_aspect))
+        gx = max(0, (sw - gw) // 2)
+        gy = max(0, (sh - gh) // 2)
+        self.view_rect = pygame.Rect(gx, gy, gw, gh)
+
+        aspect = sw / float(sh)
+        style = getattr(self, "bezel_style", "phoenix")
+        self.bezel_active = (
+            mode == "fullscreen"
+            and style not in (None, "", "off")
+            and aspect > (16.0 / 9.0 + 0.02)
+            and gx >= 40
+        )
+
+    def _init_bezel_stars(self):
+        """Starfield particles for left/right bezel panels."""
+        import random as _r
+        self._bezel_stars = []
+        if not getattr(self, "screen", None):
+            return
+        sw, sh = self.screen.get_size()
+        for _ in range(120):
+            self._bezel_stars.append({
+                "x": _r.uniform(0, sw),
+                "y": _r.uniform(0, sh),
+                "s": _r.uniform(0.4, 2.2),
+                "v": _r.uniform(12, 55),
+                "a": _r.randint(80, 220),
+            })
+
+    def _update_bezel_stars(self, dt):
+        if not self._bezel_stars:
+            return
+        sh = self.screen.get_height()
+        for st in self._bezel_stars:
+            st["y"] += st["v"] * dt
+            if st["y"] > sh:
+                st["y"] = -2
+                st["x"] = __import__("random").uniform(0, self.screen.get_width())
+
+    def _invalidate_present_cache(self):
+        """Call when display mode / bezel style / window size changes."""
+        self._bezel_blit_left = None
+        self._bezel_blit_right = None
+        self._bezel_cache_key = None
+        self._present_size = None
+
+    def _ensure_bezel_cache(self):
+        """Scale bezel art once per panel size (not every frame)."""
+        if not self.bezel_active:
+            self._bezel_blit_left = None
+            self._bezel_blit_right = None
+            self._bezel_cache_key = None
+            return
+        sw, sh = self.screen.get_size()
+        vr = self.view_rect
+        left_w = max(0, vr.x)
+        right_w = max(0, sw - vr.right)
+        key = (left_w, right_w, sh, getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
+        if key == getattr(self, "_bezel_cache_key", None):
+            return
+        self._bezel_cache_key = key
+        self._bezel_blit_left = None
+        self._bezel_blit_right = None
+
+        def cover(img, panel_w, panel_h, align_right):
+            if img is None or panel_w < 8 or panel_h < 8:
+                return None
+            iw, ih = img.get_width(), img.get_height()
+            scale = max(panel_w / float(iw), panel_h / float(ih))
+            tw = max(1, int(iw * scale))
+            th = max(1, int(ih * scale))
+            # Fast scale once; convert for faster blit
+            scaled = pygame.transform.scale(img, (tw, th)).convert()
+            # Crop to panel size; match display format for fast blit on iGPU
+            try:
+                surf = pygame.Surface((panel_w, panel_h)).convert()
+            except Exception:
+                surf = pygame.Surface((panel_w, panel_h))
+            if align_right:
+                x = panel_w - tw
+            else:
+                x = 0
+            y = (panel_h - th) // 2
+            surf.blit(scaled, (x, y))
+            return surf
+
+        self._bezel_blit_left = cover(
+            getattr(self, "bezel_left_img", None), left_w, sh, True
+        )
+        self._bezel_blit_right = cover(
+            getattr(self, "bezel_right_img", None), right_w, sh, False
+        )
+
+    def _draw_arcade_bezels(self):
+        """Blit cached left/right bezel panels (no per-frame scaling)."""
+        if not self.bezel_active:
+            return
+        self._ensure_bezel_cache()
+        vr = self.view_rect
+        if self._bezel_blit_left is not None:
+            self.screen.blit(self._bezel_blit_left, (0, 0))
+        if self._bezel_blit_right is not None:
+            self.screen.blit(self._bezel_blit_right, (vr.right, 0))
+
+    def _prepare_monitor_env(self):
+        """Set SDL window position for the selected monitor before set_mode."""
+        try:
+            import os
+            mons = self._list_monitors()
+            idx = int(getattr(self, "monitor_index", 0) or 0)
+            if idx < 0 or idx >= len(mons):
+                idx = 0
+            m = mons[idx]
+            mon_w, mon_h = int(m[1]), int(m[2])
+            mon_x = int(m[3]) if len(m) >= 5 else 0
+            mon_y = int(m[4]) if len(m) >= 5 else 0
+            mode = getattr(self, "display_mode", "fullscreen")
+            if mode == "window":
+                x = mon_x + max(0, (mon_w - BASE_WIDTH) // 2)
+                y = mon_y + max(0, (mon_h - BASE_HEIGHT) // 2)
+            else:
+                x, y = mon_x, mon_y
+            os.environ["SDL_VIDEO_WINDOW_POS"] = f"{x},{y}"
+            os.environ["SDL_VIDEO_CENTERED"] = "0"
+        except Exception as e:
+            print("prepare monitor env:", e)
+
+    def _list_monitors(self):
+        """List monitors as (index, w, h, x, y).
+
+        Index 0 is always the primary monitor (Windows) / first desktop size.
+        User-facing "Moniteur 1" = index 0.
+        """
+        raw = self._query_monitors_raw()
+        if not raw:
+            info = pygame.display.Info()
+            w = int(getattr(info, "current_w", BASE_WIDTH) or BASE_WIDTH)
+            h = int(getattr(info, "current_h", BASE_HEIGHT) or BASE_HEIGHT)
+            raw = [(max(BASE_WIDTH, w), max(BASE_HEIGHT, h), 0, 0, True)]
+        # Primary first, then left-to-right
+        raw.sort(key=lambda m: (0 if m[4] else 1, m[2], m[3]))
+        out = []
+        for i, (w, h, x, y, _prim) in enumerate(raw):
+            out.append((i, int(w), int(h), int(x), int(y)))
+        return out
+
+    def _query_monitors_raw(self):
+        """Return list of (w, h, x, y, is_primary)."""
+        # Prefer Win32 for accurate primary + origins
+        try:
+            import sys
+            if sys.platform == "win32":
+                import ctypes
+                from ctypes import wintypes
+
+                class RECT(ctypes.Structure):
+                    _fields_ = [
+                        ("left", wintypes.LONG),
+                        ("top", wintypes.LONG),
+                        ("right", wintypes.LONG),
+                        ("bottom", wintypes.LONG),
+                    ]
+
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", wintypes.DWORD),
+                        ("rcMonitor", RECT),
+                        ("rcWork", RECT),
+                        ("dwFlags", wintypes.DWORD),
+                    ]
+
+                MONITORINFOF_PRIMARY = 1
+                rects = []
+                MONITORENUMPROC = ctypes.WINFUNCTYPE(
+                    ctypes.c_int,
+                    wintypes.HMONITOR,
+                    wintypes.HDC,
+                    ctypes.POINTER(RECT),
+                    wintypes.LPARAM,
+                )
+
+                def _cb(hmon, hdc, lprect, lparam):
+                    try:
+                        mi = MONITORINFO()
+                        mi.cbSize = ctypes.sizeof(MONITORINFO)
+                        if ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                            r = mi.rcMonitor
+                            w = int(r.right - r.left)
+                            h = int(r.bottom - r.top)
+                            x, y = int(r.left), int(r.top)
+                            prim = bool(mi.dwFlags & MONITORINFOF_PRIMARY)
+                            rects.append((w, h, x, y, prim))
+                    except Exception:
+                        pass
+                    return 1
+
+                cb = MONITORENUMPROC(_cb)
+                self._mon_enum_cb = cb
+                ctypes.windll.user32.EnumDisplayMonitors(None, None, cb, 0)
+                if rects:
+                    return rects
+        except Exception as e:
+            print("Win32 monitor query:", e)
+
+        # Fallback: pygame sizes only (primary = index 0)
+        try:
+            sizes = list(pygame.display.get_desktop_sizes())
+        except Exception:
+            sizes = []
+        out = []
+        for i, (w, h) in enumerate(sizes):
+            out.append((int(w), int(h), 0, 0, i == 0))
+        return out
+
+    def _monitor_origins(self, count):
+        """Compat helper — origins from _list_monitors order."""
+        mons = self._list_monitors()
+        origins = [(m[3], m[4]) for m in mons]
+        while len(origins) < count:
+            origins.append((0, 0))
+        return origins[:count]
+
+    def _pick_monitor(self):
+        """Return (index, width, height, x, y). Default = monitor 1 (index 0, primary)."""
+        mons = self._list_monitors()
+        idx = int(getattr(self, "monitor_index", 0) or 0)
+        if idx < 0 or idx >= len(mons):
+            self.monitor_index = 0
+            return mons[0]
+        return mons[idx]
+
+    def _pick_monitor_size(self):
+        m = self._pick_monitor()
+        return m[1], m[2]
+
+    def _open_display(self):
+        """Create the display surface once (or recreate on Options change)."""
+        try:
+            mon = self._pick_monitor()
+            mon_i = int(mon[0])
+            mon_w, mon_h = int(mon[1]), int(mon[2])
+            mon_x = int(mon[3]) if len(mon) >= 5 else 0
+            mon_y = int(mon[4]) if len(mon) >= 5 else 0
+        except Exception as e:
+            print("pick monitor failed:", e)
+            mon_i, mon_w, mon_h, mon_x, mon_y = 0, BASE_WIDTH, BASE_HEIGHT, 0, 0
+
+        base_flags = pygame.DOUBLEBUF | pygame.HWSURFACE
+        mode = getattr(self, "display_mode", "fullscreen")
+
+        def _set(size, flags, display=None):
+            try:
+                if display is not None:
+                    return pygame.display.set_mode(size, flags, display=int(display))
+            except TypeError:
+                pass
+            except pygame.error as e:
+                print("set_mode(display=) failed:", e)
+            return pygame.display.set_mode(size, flags)
+
+        # Position hint for the next window
+        try:
+            import os
+            if mode == "window":
+                px = mon_x + max(0, (mon_w - BASE_WIDTH) // 2)
+                py = mon_y + max(0, (mon_h - BASE_HEIGHT) // 2)
+            else:
+                px, py = mon_x, mon_y
+            os.environ["SDL_VIDEO_WINDOW_POS"] = f"{px},{py}"
+            os.environ["SDL_VIDEO_CENTERED"] = "0"
+        except Exception:
+            pass
+
+        try:
+            if mode == "window":
+                self.screen = _set((BASE_WIDTH, BASE_HEIGHT), base_flags, mon_i)
+            elif mode == "borderless":
+                self.screen = _set((mon_w, mon_h), base_flags | pygame.NOFRAME, mon_i)
+            else:
+                try:
+                    self.screen = _set(
+                        (mon_w, mon_h), base_flags | pygame.FULLSCREEN, mon_i
+                    )
+                except pygame.error:
+                    try:
+                        self.screen = _set(
+                            (0, 0), base_flags | pygame.FULLSCREEN, mon_i
+                        )
+                    except pygame.error:
+                        # Last resort: windowed (never leave screen unset)
+                        self.display_mode = "window"
+                        self.screen = _set((BASE_WIDTH, BASE_HEIGHT), base_flags, mon_i)
+        except Exception as e:
+            print("open display failed, windowed fallback:", e)
+            import traceback
+            traceback.print_exc()
+            self.display_mode = "window"
+            self.screen = pygame.display.set_mode(
+                (BASE_WIDTH, BASE_HEIGHT), base_flags
+            )
+
+        try:
+            pygame.mouse.set_visible(self.display_mode == "window")
+        except Exception:
+            pass
+
+    def apply_display_mode(self):
+        """Apply window/fullscreen/borderless from Options (safe recreate)."""
+        try:
+            self._prepare_monitor_env()
+            self._open_display()
+        except Exception as e:
+            print("apply_display_mode failed:", e)
+            import traceback
+            traceback.print_exc()
+            try:
+                self.display_mode = "window"
+                self.screen = pygame.display.set_mode(
+                    (BASE_WIDTH, BASE_HEIGHT), pygame.DOUBLEBUF | pygame.HWSURFACE
+                )
+            except Exception as e2:
+                print("windowed fallback failed:", e2)
+                return
+
+        try:
+            pygame.display.set_caption(f"Phenix Rebirth  [{getattr(self, 'fps_target', 60)} Hz]")
+            pygame.mouse.set_visible(self.display_mode == "window")
+        except Exception:
+            pass
+
+        self._scaled_cache = None
+        self._scaled_cache_size = None
+        self._scaled_game_buf = None
+        self._present_size = None
+        try:
+            self._invalidate_present_cache()
+        except Exception:
+            pass
+        try:
+            self._layout_viewport()
+        except Exception as e:
+            print("layout failed:", e)
+        try:
+            if getattr(self, "game_surface", None) is not None:
+                self.game_surface = self.game_surface.convert()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "bezel_active", False):
+                self._ensure_bezel_cache()
+        except Exception as e:
+            print("bezel rebuild failed:", e)
+        self._bezel_stars = []
 
     def _poll_gamepad(self):
         """Hot-plug detection while on menus (and soft recovery in-game)."""
@@ -454,10 +1049,13 @@ class Game:
         save_user_settings({
             "input_mode": self.input_mode,
             "display_mode": self.display_mode,
+            "bezel_style": getattr(self, "bezel_style", "phoenix"),
+            "monitor_index": int(getattr(self, "monitor_index", 0) or 0),
             "sfx_volume": self.sfx_volume,
             "music_volume": self.music_volume,
             "language": self.language,
             "show_fps": self.show_fps,
+            "scanlines": int(getattr(self, "scanlines", 0) or 0),
         })
 
     # --- Menu navigation ---
@@ -468,8 +1066,49 @@ class Game:
         elif self.menu_screen == "reset_confirm":
             n = 2  # Oui, Non
         else:
-            n = 8  # Controle, SFX, Music, Affichage, FPS, Language, Reset HS, Retour
+            n = len(self._options_spec())
         self.menu_index = (self.menu_index + direction) % n
+
+
+    def _options_labels(self):
+        """Human-readable option rows matching _options_spec order."""
+        mode_labels = {
+            "window": t("disp_window"),
+            "fullscreen": t("disp_fullscreen"),
+            "borderless": t("disp_borderless"),
+        }
+        ctrl = t("ctrl_pad") if self.input_mode == "gamepad" else t("ctrl_kb")
+        vol_pct = int(round(self.sfx_volume * 100))
+        mus_pct = int(round(self.music_volume * 100))
+        disp = mode_labels.get(self.display_mode, self.display_mode)
+        fps_label = t("yes") if self.show_fps else t("no")
+        sl = int(getattr(self, "scanlines", 0) or 0)
+        scan_label = t("no") if sl <= 0 else f"{t('opt_scanlines')} {sl}"
+        lang_label = next((n for c, n in LANGS if c == self.language), self.language)
+        bezel_keys = {s[0]: s[1] for s in getattr(self, "BEZEL_STYLES", [("off", "bezel_off"), ("phoenix", "bezel_phoenix")])}
+        bezel_label = t(bezel_keys.get(getattr(self, "bezel_style", "phoenix"), "bezel_phoenix"))
+        mapping = {
+            "control": f"{t('opt_control')} :  <  {ctrl}  >",
+            "sfx": f"{t('opt_sfx')} :  <  {vol_pct}%  >",
+            "music": f"{t('opt_music')} :  <  {mus_pct}%  >",
+            "display": f"{t('opt_display')} :  <  {disp}  >",
+            "bezel": f"{t('opt_bezel')} :  <  {bezel_label}  >",
+            "fps": f"{t('opt_fps')} :  <  {fps_label}  >",
+            "scanlines": f"{t('opt_scanlines')} :  <  {('OFF' if sl <= 0 else str(sl))}  >",
+            "language": f"{t('opt_language')} :  <  {lang_label}  >",
+            "reset_hs": t("opt_reset_hs"),
+            "back": t("opt_back"),
+        }
+        return [mapping[k] for k in self._options_spec() if k in mapping]
+
+    def _options_spec(self):
+        """Ordered option ids (bezel / monitor only when relevant)."""
+        items = ["control", "sfx", "music", "display"]
+        mode = getattr(self, "display_mode", "fullscreen")
+        if mode == "fullscreen":
+            items.append("bezel")
+        items.extend(["fps", "scanlines", "language", "reset_hs", "back"])
+        return items
 
     def _menu_adjust(self, direction):
         """direction: -1 left, +1 right — change current option value"""
@@ -480,36 +1119,56 @@ class Game:
             return
         if self.menu_screen != "options":
             return
-        i = self.menu_index
-        if i == 0:  # controls
+        spec = self._options_spec()
+        if self.menu_index < 0 or self.menu_index >= len(spec):
+            return
+        key = spec[self.menu_index]
+        if key == "control":
             self.input_mode = "keyboard" if self.input_mode == "gamepad" else "gamepad"
             if self.input_mode == "gamepad" and not self.gamepad_detected:
                 self.input_mode = "keyboard"
             self.save_settings()
-        elif i == 1:  # SFX volume
+        elif key == "sfx":
             self.sfx_volume = max(0.0, min(1.0, self.sfx_volume + direction * 0.1))
             self.sounds.set_master_volume(self.sfx_volume)
             self.sounds.play("shoot")
             self.save_settings()
-        elif i == 2:  # Music volume
+        elif key == "music":
             self.music_volume = max(0.0, min(1.0, self.music_volume + direction * 0.1))
             self.sounds.set_music_volume(self.music_volume)
             self.save_settings()
-        elif i == 3:  # display
+        elif key == "display":
             modes = ["window", "fullscreen", "borderless"]
             idx = modes.index(self.display_mode) if self.display_mode in modes else 0
             self.display_mode = modes[(idx + direction) % len(modes)]
             self.apply_display_mode()
+            self.menu_index = min(self.menu_index, len(self._options_spec()) - 1)
             self.save_settings()
-        elif i == 4:  # FPS counter
+        elif key == "bezel":
+            styles = [s[0] for s in getattr(self, "BEZEL_STYLES", [("off", ""), ("phoenix", "")])]
+            cur = getattr(self, "bezel_style", "phoenix")
+            idx = styles.index(cur) if cur in styles else 0
+            self.bezel_style = styles[(idx + direction) % len(styles)]
+            self._layout_viewport()
+            self._invalidate_present_cache()
+            if self.bezel_active:
+                self._ensure_bezel_cache()
+            self.save_settings()
+        elif key == "fps":
             self.show_fps = not self.show_fps
             self.save_settings()
-        elif i == 5:  # Language
+        elif key == "scanlines":
+            cur = int(getattr(self, "scanlines", 0) or 0)
+            self.scanlines = (cur + direction) % 4  # 0..3
+            self._scanline_surf = None  # rebuild overlay
+            self._scanline_level_cached = None
+            self.save_settings()
+        elif key == "language":
             idx = LANG_CODES.index(self.language) if self.language in LANG_CODES else 0
             self.language = LANG_CODES[(idx + direction) % len(LANG_CODES)]
             set_lang(self.language)
+            self.text_cache.clear()
             self.save_settings()
-
 
     def _draw_logo(self, surface, center_x, top_y):
         """Draw current animated logo frame centered horizontally."""
@@ -556,13 +1215,16 @@ class Game:
             "garg3": g3,
             "garg4": g4,
         }
-        core = pygame.Surface((36, 40), pygame.SRCALPHA)
-        pygame.draw.ellipse(core, (200, 60, 160), (4, 8, 28, 28))
-        pygame.draw.ellipse(core, (120, 20, 90), (8, 16, 20, 16))
-        pygame.draw.ellipse(core, (200, 60, 160), (6, 2, 24, 20))
-        pygame.draw.circle(core, (255, 240, 80), (13, 10), 3)
-        pygame.draw.circle(core, (255, 240, 80), (23, 10), 3)
-        self.help_icons["boss"] = core
+        try:
+            core_img = pygame.image.load(asset_path("sprites", "boss_core.png")).convert_alpha()
+            ch = 36
+            scale = ch / max(1, core_img.get_height())
+            cw = max(1, int(core_img.get_width() * scale))
+            self.help_icons["boss"] = pygame.transform.smoothscale(core_img, (cw, ch))
+        except Exception:
+            core = pygame.Surface((36, 40), pygame.SRCALPHA)
+            pygame.draw.ellipse(core, (40, 90, 70), (4, 4, 28, 32))
+            self.help_icons["boss"] = core
 
     def _draw_help_gargoyle(self, surface, bird, x, y, scale=0.55):
         """Draw animated gargoyle icon centered at (x, y)."""
@@ -629,11 +1291,11 @@ class Game:
                 elif getattr(b, "alive", True):
                     add_threat(getattr(b, "x", 0), getattr(b, "y", 0), 1.5)
 
-        # Desired aim X
+        # Desired aim X — prefer targets nearly above the ship (easier kills)
         aim_x = None
         best = 1e9
         for e in getattr(self.formation, "enemies", []) or []:
-            if not getattr(e, "alive", True):
+            if not getattr(e, "alive", True) or getattr(e, "dying", False):
                 continue
             ex = getattr(e, "x", 0)
             ey = getattr(e, "y", 0)
@@ -642,7 +1304,10 @@ class Game:
                     danger_l += 2.0
                 else:
                     danger_r += 2.0
-            d = abs(ex - px) + abs(ey - py) * 0.2
+            # Weight: strongly favor enemies in a vertical corridor above us
+            d = abs(ex - px) * 1.6 + max(0.0, py - ey) * 0.15
+            if ey >= py - 20:
+                d += 200  # behind / below — ignore for aim
             if d < best:
                 best = d
                 aim_x = ex
@@ -665,8 +1330,8 @@ class Game:
         elif aim_x is not None:
             err = aim_x - px
             # Proportional aim, deadzone to stop micro-jitter
-            if abs(err) > 18:
-                desired = max(-1.0, min(1.0, err / 90.0))
+            if abs(err) > 12:
+                desired = max(-1.0, min(1.0, err / 70.0))
             else:
                 desired = 0.0
 
@@ -678,7 +1343,7 @@ class Game:
 
         # Low-pass filter on steering (frame-rate independent-ish)
         # Higher alpha = more responsive; lower = smoother
-        alpha = min(1.0, 4.5 * self.dt)
+        alpha = min(1.0, 6.0 * self.dt)
         self.ai_move_smooth += (desired - self.ai_move_smooth) * alpha
 
         # Hold direction at least ~0.12s when committed (hysteresis)
@@ -702,10 +1367,40 @@ class Game:
 
         move = self.ai_dir_locked if self.ai_dir_timer > 0 and self.ai_dir_locked != 0 else discrete
 
-        # Fire when stable and aligned
-        if self.player.bullet is None and aim_x is not None:
-            if abs(aim_x - px) < 40 and abs(self.ai_move_smooth) < 0.55:
+        # Aggressive fire: shoot whenever a target is roughly in our column
+        shots_ready = len(getattr(self.player, "shots", []) or []) == 0
+        if shots_ready:
+            # 1) Primary aim target in wide lane
+            if aim_x is not None and abs(aim_x - px) < 70:
                 shoot = True
+            else:
+                # 2) Any living enemy roughly above us
+                for e in getattr(self.formation, "enemies", []) or []:
+                    if not getattr(e, "alive", True) or getattr(e, "dying", False):
+                        continue
+                    if abs(getattr(e, "x", 0) - px) < 55 and getattr(e, "y", 0) < py - 30:
+                        shoot = True
+                        break
+            # 3) Boss cells / core
+            if not shoot and self.boss_saucer is not None and not getattr(self.boss_saucer, "dead", False):
+                if aim_x is not None and abs(aim_x - px) < 80:
+                    shoot = True
+            # 4) Still fire occasionally while hunting (keeps pressure)
+            if not shoot and aim_x is not None and random.random() < 0.08:
+                shoot = True
+
+        # Try to activate Phenix when charged and useful
+        if self.player.can_activate_phenix():
+            threat_sum = danger_l + danger_r
+            want = False
+            if threat_sum > 0.8:
+                want = True
+            elif self.stage % 5 == 0 and self.player.phenix_gauge >= 3:
+                want = random.random() < 0.06
+            elif aim_x is not None and abs(aim_x - px) < 70:
+                want = random.random() < 0.03
+            if want:
+                self.player.try_activate_phenix()
 
         return move, shoot
 
@@ -730,6 +1425,14 @@ class Game:
         self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
         self.player.sounds = self.sounds
         self.player.lives = 5
+        # Help AI show Phenix on stages 2–5 (never pre-fill stage 1)
+        if self.stage != 1:
+            roll = random.random()
+            if roll < 0.55:
+                self.player.phenix_gauge = random.randint(4, 8)
+            elif roll < 0.80:
+                self.player.phenix_gauge = random.randint(3, 5)
+            # else start empty and try to build
         self.input_grace = 0.25
         self.shake_amount = 0.0
         self._setup_stage(self.stage)
@@ -743,21 +1446,24 @@ class Game:
     def _end_attract(self):
         """Return to main menu from attract mode."""
         saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
-                 self.fps_target, self.show_fps, self.difficulty, self.language)
+                 self.fps_target, self.show_fps, self.difficulty, self.language,
+                 getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
         first = self.help_first_shown
         nxt = self.next_is_attract
-        self.__init__()
+        self.__init__(soft=True)
         (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
-         self.fps_target, self.show_fps, self.difficulty, self.language) = saved
+         self.fps_target, self.show_fps, self.difficulty, self.language,
+         self.bezel_style, self.monitor_index) = saved
         set_lang(self.language)
         self.sounds.set_music_volume(self.music_volume)
         self.sounds.set_master_volume(self.sfx_volume)
-        self.apply_display_mode()
+        # Do NOT re-call apply_display_mode — avoids desktop flash
         self.help_first_shown = first
         self.next_is_attract = nxt
         self.attract_mode = False
         self.started = False
         self.menu_idle = 0.0
+        self._paint_menu_frame()
 
     def _reset_menu_idle(self):
         self.menu_idle = 0.0
@@ -777,21 +1483,47 @@ class Game:
         if self.paused:
             self.sounds.play_electric(False)
 
+    def _paint_menu_frame(self):
+        """Immediate frame so soft reset never shows the desktop."""
+        try:
+            self.game_surface.fill((0, 0, 0))
+            if getattr(self, "starfield", None):
+                self.starfield.draw(self.game_surface)
+            if getattr(self, "display_mode", "window") == "window":
+                self.screen.blit(self.game_surface, (0, 0))
+            else:
+                self._layout_viewport()
+                self.screen.fill((0, 0, 0))
+                if getattr(self, "bezel_active", False):
+                    self._draw_arcade_bezels()
+                vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
+                scaled = pygame.transform.scale(self.game_surface, (vr.width, vr.height))
+                self.screen.blit(scaled, vr.topleft)
+            pygame.display.flip()
+        except Exception:
+            pass
+
     def _quit_to_menu(self):
         """Leave current run, return to main menu (keep settings)."""
         saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
-                 self.fps_target, self.show_fps, self.difficulty, self.language)
-        inf = getattr(self.player, "infinite_lives", False)
-        self.__init__()
+                 self.fps_target, self.show_fps, self.difficulty, self.language,
+                 getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
+        self.__init__(soft=True)
         (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
-         self.fps_target, self.show_fps, self.difficulty, self.language) = saved
+         self.fps_target, self.show_fps, self.difficulty, self.language,
+         self.bezel_style, self.monitor_index) = saved
         set_lang(self.language)
         self.sounds.set_music_volume(self.music_volume)
         self.sounds.set_master_volume(self.sfx_volume)
-        self.apply_display_mode()
+        # Keep existing window — no set_mode flash
         self.paused = False
         self.quit_confirm = False
+        self.pause_options = False
+        self.menu_screen = "main"
+        self.menu_index = 0
+        self.input_grace = 0.35  # absorb the confirm key/button that quit the run
         self.player.infinite_lives = False
+        self._paint_menu_frame()
 
     def _menu_back(self):
 
@@ -800,7 +1532,7 @@ class Game:
             return
         if self.menu_screen == "reset_confirm":
             self.menu_screen = "options"
-            self.menu_index = 6  # Reset High Scores line
+            (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())  # Reset High Scores line
         elif self.menu_screen == "options":
             self.menu_screen = "main"
             self.menu_index = 2  # OPTIONS
@@ -822,9 +1554,8 @@ class Game:
                 self.started = True
                 self.input_grace = 0.35
             elif self.menu_index == 1:
-                # Cycle difficulty on confirm too
-                idx = self.DIFFICULTIES.index(self.difficulty)
-                self.difficulty = self.DIFFICULTIES[(idx + 1) % len(self.DIFFICULTIES)]
+                # Difficulty changes only with Left/Right — Enter does not cycle
+                pass
             elif self.menu_index == 2:
                 self.menu_screen = "options"
                 self.menu_index = 0
@@ -841,26 +1572,42 @@ class Game:
         elif self.menu_screen == "reset_confirm":
             if self.menu_index == 0:  # Oui
                 self.hs_entries = reset_highscores()
-                self.menu_screen = "options"
-                self.menu_index = 6
-            else:  # Non
-                self.menu_screen = "options"
-                self.menu_index = 6
+            self.menu_screen = "options"
+            spec = self._options_spec()
+            self.menu_index = spec.index("reset_hs") if "reset_hs" in spec else 0
         elif self.menu_screen == "options":
-            if self.menu_index == 6:  # Reset high scores → confirmation
+            spec = self._options_spec()
+            key = spec[self.menu_index] if 0 <= self.menu_index < len(spec) else ""
+            if key == "reset_hs":
                 self.menu_screen = "reset_confirm"
-                self.menu_index = 1  # default on Non
-            elif self.menu_index == 7:  # Retour
+                self.menu_index = 1
+            elif key == "back":
                 if self.pause_options:
                     self.pause_options = False
-                    self.menu_screen = "options"  # unused while pause_options False
                     self.menu_index = 0
                 else:
                     self.menu_screen = "main"
-                    self.menu_index = 2  # highlight OPTIONS
-            # other options adjusted with left/right
+                    self.menu_index = 2
 
     # --- Input ---
+
+    def take_screenshot(self):
+        """Save a PNG of the current display (fullscreen includes bezel)."""
+        try:
+            folder = os.path.join(user_data_dir(), "screenshots")
+            os.makedirs(folder, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(folder, f"phenix_{stamp}.png")
+            # Capture the real window surface (bezels + game)
+            pygame.image.save(self.screen, path)
+            self.cheat_msg = f"SCREENSHOT"
+            self.cheat_msg_timer = 2.0
+            print("Screenshot saved:", path)
+            return path
+        except Exception as e:
+            print("Screenshot failed:", e)
+            return None
+
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -868,9 +1615,16 @@ class Game:
             elif event.type in (getattr(pygame, "JOYDEVICEADDED", -1), getattr(pygame, "JOYDEVICEREMOVED", -2)):
                 self._poll_gamepad()
             elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F12:
+                    self.take_screenshot()
+                    continue
                 if self.attract_mode:
                     self._end_attract()
                     continue
+                # Phenix activation (in-game only)
+                if self.started and not self.paused and not self.game_over:
+                    if event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT, pygame.K_x):
+                        self._activate_phenix_from_input()
                 if event.key == pygame.K_ESCAPE:
                     if self.started and not self.game_over:
                         if self.quit_confirm:
@@ -901,17 +1655,20 @@ class Game:
                                 if self.menu_index == 0:
                                     self.hs_entries = reset_highscores()
                                 self.menu_screen = "options"
-                                self.menu_index = 6
-                            elif self.menu_index == 7:
-                                self.pause_options = False
-                                self.menu_index = 0
-                            elif self.menu_index == 6:
-                                self.menu_screen = "reset_confirm"
-                                self.menu_index = 1
+                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                            else:
+                                spec = self._options_spec()
+                                key = spec[self.menu_index] if 0 <= self.menu_index < len(spec) else ""
+                                if key == "back":
+                                    self.pause_options = False
+                                    self.menu_index = 0
+                                elif key == "reset_hs":
+                                    self.menu_screen = "reset_confirm"
+                                    self.menu_index = 1
                         elif event.key == pygame.K_ESCAPE:
                             if self.menu_screen == "reset_confirm":
                                 self.menu_screen = "options"
-                                self.menu_index = 6
+                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
                             else:
                                 self.pause_options = False
                                 self.menu_index = 0
@@ -929,9 +1686,11 @@ class Game:
                                 self.menu_index = 0
                             else:  # Quitter la partie
                                 self._quit_to_menu()
+                                continue  # don't also confirm main-menu with same Enter
                         elif event.key == pygame.K_ESCAPE:
                             self.paused = False
                             self.pause_options = False
+                            continue
                 # Quit game confirm (menus) — ESC already toggled above
                 elif self.quit_confirm and not self.started:
                     if event.key in (pygame.K_UP, pygame.K_w):
@@ -945,7 +1704,7 @@ class Game:
                             self.quit_confirm = False
 
                 
-                if not self.started and not self.game_over and not self.quit_confirm:
+                if not self.started and not self.game_over and not self.quit_confirm and getattr(self, "input_grace", 0) <= 0:
                     if self.menu_screen == "help":
                         self._reset_menu_idle()
                     elif self.menu_screen == "credits":
@@ -969,7 +1728,15 @@ class Game:
                                 self.player.lives = 99
                                 self.cheat_buffer = ""
                                 self.cheat_msg = "INFINITE LIVES"
-                                self.cheat_msg_timer = 2.0
+                                self.cheat_msg_timer = 5.0
+                            elif "PHEN" in self.cheat_buffer:
+                                self.used_cheat = True
+                                self.phenix_cheat = True
+                                self.player.phenix_auto_refill = True
+                                self.player.phenix_gauge = 10
+                                self.cheat_buffer = ""
+                                self.cheat_msg = "PHENIX MAX"
+                                self.cheat_msg_timer = 5.0
                         else:
                             # Any non-alnum key (Enter, Esc already handled, Space, arrows...) returns
                             if event.key not in (pygame.K_LSHIFT, pygame.K_RSHIFT, pygame.K_CAPSLOCK):
@@ -1012,18 +1779,22 @@ class Game:
                             if self.hs_char_index == 2 and self.hs_name[2] != "A":
                                 pass  # stay on last or auto-advance feel
                     elif self.hs_phase == "table" and event.key == pygame.K_RETURN:
-                        saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language)
-                        self.__init__()
-                        self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language = saved
+                        saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
+                        self.__init__(soft=True)
+                        self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, self.bezel_style, self.monitor_index = saved
                         set_lang(self.language)
                         self.sounds.set_music_volume(self.music_volume)
                         self.sounds.set_master_volume(self.sfx_volume)
-                        self.apply_display_mode()
+                        self._paint_menu_frame()
             
             elif event.type == pygame.JOYBUTTONDOWN:
                 if self.attract_mode:
                     self._end_attract()
                     continue
+                # B = Phenix while playing (menus still use B as back elsewhere)
+                if (event.button == 1 and self.started and not self.paused
+                        and not self.game_over and not self.quit_confirm):
+                    self._activate_phenix_from_input()
                 # Start button (7 Xbox / 9 some pads) — pause or quit confirm
                 if event.button in (7, 9, 6):
                     if self.started and not self.game_over:
@@ -1043,17 +1814,20 @@ class Game:
                                 if self.menu_index == 0:
                                     self.hs_entries = reset_highscores()
                                 self.menu_screen = "options"
-                                self.menu_index = 6
-                            elif self.menu_index == 7:
-                                self.pause_options = False
-                                self.menu_index = 0
-                            elif self.menu_index == 6:
-                                self.menu_screen = "reset_confirm"
-                                self.menu_index = 1
+                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                            else:
+                                spec = self._options_spec()
+                                key = spec[self.menu_index] if 0 <= self.menu_index < len(spec) else ""
+                                if key == "back":
+                                    self.pause_options = False
+                                    self.menu_index = 0
+                                elif key == "reset_hs":
+                                    self.menu_screen = "reset_confirm"
+                                    self.menu_index = 1
                         elif event.button == 1:
                             if self.menu_screen == "reset_confirm":
                                 self.menu_screen = "options"
-                                self.menu_index = 6
+                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
                             else:
                                 self.pause_options = False
                                 self.menu_index = 0
@@ -1067,9 +1841,11 @@ class Game:
                                 self.menu_index = 0
                             else:
                                 self._quit_to_menu()
+                                continue  # same A must not confirm main menu
                         elif event.button == 1:
                             self.paused = False
                             self.pause_options = False
+                            continue
                 elif self.quit_confirm and not self.started:
                     if event.button == 0:
                         if self.quit_index == 0:
@@ -1078,7 +1854,7 @@ class Game:
                             self.quit_confirm = False
                     elif event.button == 1:
                         self.quit_confirm = False
-                elif not self.started and not self.game_over and not self.quit_confirm:
+                elif not self.started and not self.game_over and not self.quit_confirm and getattr(self, "input_grace", 0) <= 0:
                     if self.menu_screen == "help":
                         self._reset_menu_idle()
                     elif event.button == 0:  # A — confirm / enter
@@ -1095,13 +1871,13 @@ class Game:
                         self._submit_highscore()
                 elif self.game_over and self.hs_phase == "table":
                     if event.button in (0, 1):
-                        saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language)
-                        self.__init__()
-                        self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language = saved
+                        saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
+                        self.__init__(soft=True)
+                        self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, self.bezel_style, self.monitor_index = saved
                         set_lang(self.language)
                         self.sounds.set_music_volume(self.music_volume)
                         self.sounds.set_master_volume(self.sfx_volume)
-                        self.apply_display_mode()
+                        self._paint_menu_frame()
             elif event.type == pygame.JOYHATMOTION:
                 hx, hy = event.value
                 if not self.started and not self.game_over:
@@ -1438,73 +2214,91 @@ class Game:
                 self.player.destroy_bullet()
             return
         
-        # Player bullet vs Enemies / Boss
-        bullet_rect = self.player.get_bullet_rect()
-        if bullet_rect is not None:
+        # Player bullet(s) vs Enemies / Boss
+        for shot_i, bullet_rect in self.player.get_bullet_rects():
+            hit_something = False
             # Boss saucer armor / core
             if self.boss_saucer is not None and self.boss_saucer.alive:
                 result = self.boss_saucer.hit_bullet(bullet_rect)
                 if result is not None:
                     kind, target = result
-                    self.player.destroy_bullet()
                     if kind == "cell":
+                        self.player.destroy_bullet("neutral", index=shot_i)
                         self.explosions.append(Explosion(target.x, target.y, kind="enemy"))
                         self.shake_amount = 3.5
                         self.sounds.play("enemy_explosion", volume=0.4)
                         self.score += 1
                     elif kind == "deco":
+                        self.player.destroy_bullet("neutral", index=shot_i)
                         self.explosions.append(Explosion(target.x, target.y, kind="enemy"))
                         self.shake_amount = 5.0
                         self.sounds.play("enemy_explosion")
                         self.score += 50
                     elif kind == "boss":
+                        self.player.destroy_bullet("valid", index=shot_i)
                         target.kill()
                         self.score += self._boss_points()
                         self.explosions.append(Explosion(target.x, target.y, kind="gameover"))
                         self.shake_amount = 20.0
                         self.sounds.play("explosion_big")
-                    bullet_rect = None  # consumed
-            
-            if bullet_rect is not None:
-              for enemy in self.formation.get_hittable_enemies():
+                    hit_something = True
+            if hit_something:
+                break  # indices shifted; next frame continues
+
+            for enemy in self.formation.get_hittable_enemies():
                 if isinstance(enemy, BigBird):
-                    # Wings first (no points), then body (kill + 30)
                     if bullet_rect.colliderect(enemy.get_left_wing_hitbox()):
                         if enemy.hit_wing("left"):
-                            self.player.destroy_bullet()
+                            self.player.destroy_bullet("neutral", index=shot_i)
                             self.explosions.append(Explosion(enemy.x - 35, enemy.y, kind="enemy"))
                             self.shake_amount = 3.0
                             self.sounds.play("enemy_explosion", volume=0.5)
                         else:
-                            self.player.destroy_bullet()
+                            self.player.destroy_bullet("neutral", index=shot_i)
+                        hit_something = True
                         break
                     if bullet_rect.colliderect(enemy.get_right_wing_hitbox()):
                         if enemy.hit_wing("right"):
-                            self.player.destroy_bullet()
+                            self.player.destroy_bullet("neutral", index=shot_i)
                             self.explosions.append(Explosion(enemy.x + 35, enemy.y, kind="enemy"))
                             self.shake_amount = 3.0
                             self.sounds.play("enemy_explosion", volume=0.5)
                         else:
-                            self.player.destroy_bullet()
+                            self.player.destroy_bullet("neutral", index=shot_i)
+                        hit_something = True
                         break
                     if bullet_rect.colliderect(enemy.get_body_hitbox()):
                         enemy.kill()
-                        self.player.destroy_bullet()
+                        self.player.destroy_bullet("valid", index=shot_i)
                         self.score += self._enemy_points(getattr(enemy, "stage", 3))
                         self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
                         self.shake_amount = 7.0
                         self.sounds.play("enemy_explosion")
+                        hit_something = True
+                        break
+                    # Catch-all: silhouette overlap that slipped between wing/body boxes
+                    if bullet_rect.colliderect(enemy.get_hitbox()):
+                        enemy.kill()
+                        self.player.destroy_bullet("valid", index=shot_i)
+                        self.score += self._enemy_points(getattr(enemy, "stage", 3))
+                        self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
+                        self.shake_amount = 7.0
+                        self.sounds.play("enemy_explosion")
+                        hit_something = True
                         break
                 else:
                     if bullet_rect.colliderect(enemy.get_hitbox()):
                         enemy.kill()
-                        self.player.destroy_bullet()
+                        self.player.destroy_bullet("valid", index=shot_i)
                         self.score += self._enemy_points(getattr(enemy, "stage", 1))
                         self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
                         self.shake_amount = 5.5
                         self.sounds.play("enemy_explosion")
+                        hit_something = True
                         break
-        
+            if hit_something:
+                break
+
         # Enemy attacks vs Player
         if self.player.alive and not self.player.dying:
             player_hitbox = self.player.get_hitbox()
@@ -1527,6 +2321,9 @@ class Game:
                             self.player.dying = True
                             self.player.death_timer = 0.0
                             self.player.invulnerable = 0.0
+                            self.player.phenix_gauge = float(getattr(self.player, "phenix_min_gauge", 0))
+                            self.player.combo_streak = 0
+                            self.player.phenix_timer = 0.0
                             self.explosions.append(Explosion(self.player.x, self.player.y, kind="gameover"))
                             self.shake_amount = 24.0
                             self.sounds.play("explosion_big")
@@ -1535,7 +2332,7 @@ class Game:
                 for b in self.boss_saucer.bullets[:]:
                     if b.alive and b.get_hitbox().colliderect(player_hitbox):
                         b.alive = False
-                        if self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
+                        if (not self.player.is_phenix) and self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
                             self.player.hit()
                             kind = "gameover" if self.player.dying else "bullet"
                             self.explosions.append(Explosion(self.player.x, self.player.y, kind=kind))
@@ -1547,7 +2344,7 @@ class Game:
                 if bullet.alive and bullet.get_hitbox().colliderect(player_hitbox):
                     bullet.alive = False
                     # Always play hit explosion if damage can be applied
-                    if self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
+                    if (not self.player.is_phenix) and self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
                         self.player.hit()
                         kind = "gameover" if self.player.dying else "bullet"
                         self.explosions.append(Explosion(self.player.x, self.player.y, kind=kind))
@@ -1558,14 +2355,17 @@ class Game:
             for enemy in self.formation.get_hittable_enemies():
                 if enemy.diving and enemy.get_hitbox().colliderect(player_hitbox):
                     enemy.kill()
-                    self.player.hit()
-                    # Massive dual explosion — gameover if final life
                     self.explosions.append(Explosion(enemy.x, enemy.y, kind="collision"))
                     self.sounds.play("enemy_explosion")
-                    pkind = "gameover" if self.player.dying else "collision"
-                    self.explosions.append(Explosion(self.player.x, self.player.y, kind=pkind))
-                    self.shake_amount = 26.0 if self.player.dying else 18.0
-                    self.sounds.play("explosion_big")
+                    if self.player.is_phenix:
+                        # Phenix: destroy the diver, no player damage
+                        self.shake_amount = max(self.shake_amount, 8.0)
+                    else:
+                        self.player.hit()
+                        pkind = "gameover" if self.player.dying else "collision"
+                        self.explosions.append(Explosion(self.player.x, self.player.y, kind=pkind))
+                        self.shake_amount = 26.0 if self.player.dying else 18.0
+                        self.sounds.play("explosion_big")
                     break
         
         for exp in self.explosions[:]:
@@ -1581,6 +2381,48 @@ class Game:
             self.shake_amount = max(0.0, self.shake_amount - SCREEN_SHAKE_DECAY * self.dt)
 
     # --- Render (logical canvas, then present) ---
+    def _ensure_scanline_surf(self):
+        """Cached CRT scanline overlay. Levels 1–3 (stronger / denser)."""
+        level = int(getattr(self, "scanlines", 0) or 0)
+        if level <= 0:
+            return None
+        if (
+            self._scanline_surf is not None
+            and getattr(self, "_scanline_level_cached", None) == level
+        ):
+            return self._scanline_surf
+
+        surf = pygame.Surface((BASE_WIDTH, BASE_HEIGHT), pygame.SRCALPHA)
+        if level == 1:
+            # Soft classic: every other line, light alpha
+            for y in range(0, BASE_HEIGHT, 2):
+                pygame.draw.line(surf, (0, 0, 0, 55), (0, y), (BASE_WIDTH, y))
+        elif level == 2:
+            # Stronger alpha + slight double thickness feel
+            for y in range(0, BASE_HEIGHT, 2):
+                pygame.draw.line(surf, (0, 0, 0, 95), (0, y), (BASE_WIDTH, y))
+            for y in range(1, BASE_HEIGHT, 4):
+                pygame.draw.line(surf, (0, 0, 0, 35), (0, y), (BASE_WIDTH, y))
+        else:
+            # Level 3: heavy CRT — dense + darker
+            for y in range(0, BASE_HEIGHT, 2):
+                pygame.draw.line(surf, (0, 0, 0, 130), (0, y), (BASE_WIDTH, y))
+            for y in range(1, BASE_HEIGHT, 2):
+                pygame.draw.line(surf, (0, 0, 0, 45), (0, y), (BASE_WIDTH, y))
+            # Very subtle vignette-ish top/bottom weight
+            for y in list(range(0, 8)) + list(range(BASE_HEIGHT - 8, BASE_HEIGHT)):
+                a = 25 if y % 2 == 0 else 15
+                pygame.draw.line(surf, (0, 0, 0, a), (0, y), (BASE_WIDTH, y))
+
+        try:
+            surf = surf.convert_alpha()
+        except Exception:
+            pass
+        self._scanline_surf = surf
+        self._scanline_level_cached = level
+        return surf
+
+
     def draw(self):
         self.game_surface.fill(COLOR_BG)
         
@@ -1602,19 +2444,21 @@ class Game:
             
             self.player.draw(self.game_surface)
             
-            # UI
-            score_surf = self.font.render(self.format_score(self.score), True, (110, 255, 150))
+            # UI (cached text — re-render only when string/color changes)
+            tc = self.text_cache
+            score_surf = tc.get(self.font, self.format_score(self.score), (110, 255, 150))
             self.game_surface.blit(score_surf, (BASE_WIDTH // 2 - score_surf.get_width() // 2, 16))
+            self._draw_phenix_gauge()
             if self.attract_mode:
-                demo = self.medium_font.render(t("demo"), True, (255, 180, 80))
+                demo = tc.get(self.medium_font, t("demo"), (255, 180, 80))
                 self.game_surface.blit(demo, (BASE_WIDTH // 2 - demo.get_width() // 2, 72))
-                hint = self.font.render(t("press_any"), True, (180, 180, 200))
+                hint = tc.get(self.font, t("press_any"), (180, 180, 200))
                 self.game_surface.blit(hint, (BASE_WIDTH // 2 - hint.get_width() // 2, BASE_HEIGHT - 36))
             if getattr(self, "used_cheat", False) and not self.attract_mode:
-                ch = self.font.render(t("cheat_active"), True, (255, 60, 60))
+                ch = tc.get(self.font, t("cheat_active"), (255, 60, 60))
                 self.game_surface.blit(ch, (BASE_WIDTH // 2 - ch.get_width() // 2, 74))
             
-            stage_surf = self.font.render(f"{t('stage')} {self.stage}", True, (180, 180, 220))
+            stage_surf = tc.get(self.font, f"{t('stage')} {self.stage}", (180, 180, 220))
             self.game_surface.blit(stage_surf, (16, 16))
             # Flags for each boss defeated — at 10+, one big flag only
             if self.bosses_defeated >= 10:
@@ -1626,27 +2470,11 @@ class Game:
                 for i in range(self.bosses_defeated):
                     self._draw_boss_flag(self.game_surface, fx + i * 18, fy, big=False)
             
-            if self.cheat_msg_timer > 0 and self.cheat_msg:
-                # Pulsing glow for 1UP / stage messages
-                pulse = 0.5 + 0.5 * abs(__import__("math").sin(self.cheat_msg_timer * 8.0))
-                if self.cheat_msg.startswith("1UP"):
-                    # bright blinking gold
-                    blink = int(self.cheat_msg_timer * 6) % 2 == 0
-                    col = (255, 255, 180) if blink else (255, 200, 60)
-                    cm = self.big_font.render(self.cheat_msg, True, col)
-                    # soft glow layers
-                    for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
-                        g = self.big_font.render(self.cheat_msg, True, (255, 220, 80))
-                        g.set_alpha(int(60 + 80 * pulse))
-                        self.game_surface.blit(g, (BASE_WIDTH // 2 - cm.get_width() // 2 + ox, 72 + oy))
-                    self.game_surface.blit(cm, (BASE_WIDTH // 2 - cm.get_width() // 2, 72))
-                else:
-                    cm = self.medium_font.render(self.cheat_msg, True, (255, 220, 100))
-                    self.game_surface.blit(cm, (BASE_WIDTH // 2 - cm.get_width() // 2, 80))
+            self._draw_cheat_message()
             
             # Lives as mini ships
             if self.player.infinite_lives:
-                inf = self.font.render(t("lives_inf"), True, (110, 255, 150))
+                inf = self.text_cache.get(self.font, t("lives_inf"), (110, 255, 150))
                 self.game_surface.blit(inf, (BASE_WIDTH // 2 - inf.get_width() // 2, 44))
             n_lives = max(0, self.player.lives)
             if n_lives > 0 and not self.player.infinite_lives:
@@ -1816,6 +2644,7 @@ class Game:
                         )
                 back = self.font.render(t("press_any"), True, (255, 220, 100))
                 self.game_surface.blit(back, (BASE_WIDTH // 2 - back.get_width() // 2, BASE_HEIGHT - 60))
+                self._draw_cheat_message()
             
             elif self.menu_screen == "credits":
                 # Variable line heights; title uses animated logo
@@ -1891,16 +2720,7 @@ class Game:
                 fps_label = t("yes") if self.show_fps else t("no")
                 mus_pct = int(round(self.music_volume * 100))
                 lang_label = next((n for c, n in LANGS if c == self.language), self.language)
-                lines = [
-                    f"{t('opt_control')} :  <  {ctrl}  >",
-                    f"{t('opt_sfx')} :  <  {vol_pct}%  >",
-                    f"{t('opt_music')} :  <  {mus_pct}%  >",
-                    f"{t('opt_display')} :  <  {disp}  >",
-                    f"{t('opt_fps')} :  <  {fps_label}  >",
-                    f"{t('opt_language')} :  <  {lang_label}  >",
-                    t("opt_reset_hs"),
-                    t("opt_back"),
-                ]
+                lines = self._options_labels()
                 base_y = 150
                 for i, label in enumerate(lines):
                     selected = (i == self.menu_index)
@@ -2029,16 +2849,7 @@ class Game:
                         self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, 360 + i * 50))
                 else:
                     lang_label = next((n for c, n in LANGS if c == self.language), self.language)
-                    lines = [
-                        f"{t('opt_control')} :  <  {ctrl}  >",
-                        f"{t('opt_sfx')} :  <  {vol_pct}%  >",
-                        f"{t('opt_music')} :  <  {mus_pct}%  >",
-                        f"{t('opt_display')} :  <  {disp}  >",
-                        f"{t('opt_fps')} :  <  {fps_label}  >",
-                        f"{t('opt_language')} :  <  {lang_label}  >",
-                        t("opt_reset_hs"),
-                        t("opt_back"),
-                    ]
+                    lines = self._options_labels()
                     base_y = 150
                     for i, label in enumerate(lines):
                         selected = (i == self.menu_index)
@@ -2072,20 +2883,72 @@ class Game:
                 surf = self.medium_font.render(prefix + label, True, col)
                 self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, 360 + i * 50))
 
-        # FPS counter (top-right)
+        # FPS counter (top-right) — refresh text ~4 Hz to avoid constant render
         if self.show_fps:
-            fps_val = int(round(self.clock.get_fps()))
-            fps_surf = self.font.render(f"{fps_val} FPS", True, (120, 220, 120))
+            self._fps_timer = getattr(self, "_fps_timer", 0.0) + getattr(self, "dt", 0.016)
+            if self._fps_timer >= 0.25:
+                self._fps_timer = 0.0
+                self._fps_display = int(round(self.clock.get_fps()))
+            fps_surf = self.text_cache.get(
+                self.font, f"{getattr(self, '_fps_display', 0)} FPS", (120, 220, 120)
+            )
             self.game_surface.blit(fps_surf, (BASE_WIDTH - fps_surf.get_width() - 16, 12))
+
+        # CRT scanlines (logical resolution, then scaled with the game)
+        if int(getattr(self, "scanlines", 0) or 0) > 0:
+            sc = self._ensure_scanline_surf()
+            if sc is not None:
+                self.game_surface.blit(sc, (0, 0))
         
-        self.screen.blit(self.game_surface, (shake_x, shake_y))
+        # Present — scale game only when needed; bezel art is cached
+        mode = getattr(self, "display_mode", "window")
+        scr_size = self.screen.get_size()
+        if getattr(self, "_present_size", None) != scr_size:
+            self._present_size = scr_size
+            self._layout_viewport()
+            self._invalidate_present_cache()
+
+        vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
+
+        if mode == "window" and scr_size == (BASE_WIDTH, BASE_HEIGHT):
+            self.screen.blit(self.game_surface, (shake_x, shake_y))
+        else:
+            if self.bezel_active:
+                # Only clear the game band if needed; bezels cover the sides
+                self.screen.fill((0, 0, 0), vr)
+                self._draw_arcade_bezels()
+            else:
+                self.screen.fill((0, 0, 0))
+            if vr.width > 0 and vr.height > 0:
+                if vr.width == BASE_WIDTH and vr.height == BASE_HEIGHT:
+                    self.screen.blit(self.game_surface, (vr.x + shake_x, vr.y + shake_y))
+                else:
+                    key = (vr.width, vr.height)
+                    buf = getattr(self, "_scaled_game_buf", None)
+                    if buf is None or buf.get_size() != key:
+                        try:
+                            self._scaled_game_buf = pygame.Surface(key).convert()
+                        except Exception:
+                            self._scaled_game_buf = pygame.Surface(key)
+                        buf = self._scaled_game_buf
+                    pygame.transform.scale(self.game_surface, key, buf)
+                    self.screen.blit(buf, (vr.x + shake_x, vr.y + shake_y))
         pygame.display.flip()
 
     # --- Main loop ---
     def run(self):
         while self.running:
-            # Cap to 60 or 120 depending on detected display
-            self.dt = self.clock.tick(self.fps_target) / 1000.0
+            # Cap: menu stays at 60 (enough, less CPU on iGPU).
+            # In-game use detected refresh, but don't chase 120 if we can't hold it.
+            if not self.started or self.game_over:
+                cap = 60
+            else:
+                cap = self.fps_target
+                # If last second was slow, fall back to 60 to avoid thermal spiral
+                fps_now = self.clock.get_fps()
+                if fps_now > 1.0 and fps_now < 50.0 and self.fps_target > 60:
+                    cap = 60
+            self.dt = self.clock.tick(cap) / 1000.0
             # Safety clamp (spiral of death protection)
             self.dt = min(self.dt, 0.05)
             

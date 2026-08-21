@@ -1,6 +1,8 @@
 # Phenix Rebirth
 
-**Version 0.1.0**
+**Version 0.2.0-rc.1** (Release Candidate)
+
+> Pre-release for testing. Feedback welcome before the stable **0.2.0** tag.
 
 A modern, ultra-responsive PC remake of the classic arcade shooter **Phoenix** (1978 / 1980).
 
@@ -12,16 +14,26 @@ Free to play · Open source · MIT License
 
 ---
 
+
+## Screenshots
+
+| Menu | Help | In-game (demo) |
+|------|------|----------------|
+| ![Title screen](docs/screenshots/accueil.png) | ![Help](docs/screenshots/aide.png) | ![Gameplay](docs/screenshots/ingame.png) |
+
 ## Features
 
 - Faithful stage cycle inspired by the arcade original (birds → gargoyles → boss saucer)
+- **PHENIX mode** — charge a gauge with accurate shots, transform into a firebird (invulnerable, faster, dual flame shots)
 - Infinite progression: stages loop with rising speed after each boss
 - Smooth 60 / 120 Hz play with delta-time movement
-- Keyboard & gamepad (hot-plug)
+- Keyboard & gamepad (hot-plug while in menus)
 - Local high scores (top 15)
 - 13 languages
 - Attract mode (AI demo) + help screen
 - Difficulty: Novice / Normal / Veteran
+- Optional CRT **scanlines** (3 intensity levels)
+- Arcade bezels on ultrawide fullscreen
 
 ## Requirements
 
@@ -50,10 +62,12 @@ python main.py
 |--------|----------|---------|
 | Move | Arrow keys / WASD | Left stick / D-Pad |
 | Fire | Space / Up / W | A (or face buttons) |
+| **PHENIX** activate / cancel | Left Shift / Right Shift / X | **B** |
 | Pause | Esc | Start |
 | Menus | Arrows + Enter | Stick / D-Pad + A · B = back |
 
-One player shot on screen at a time (classic Phoenix rule).
+- One player shot on screen at a time (classic Phoenix rule); dual shots only in PHENIX form.
+- PHENIX gauge: **+1** per valid kill, **−1** per miss; activate from **3**. Cancel early with B / Shift to keep remaining gauge.
 
 ## Stages (cycle 1–5, then faster loops)
 
@@ -61,89 +75,53 @@ One player shot on screen at a time (classic Phoenix rule).
 |-------|---------|-----------------|
 | 1 | Dark birds | 10 |
 | 2 | Green / khaki birds | 20 |
-| 3 | Gargoyles | 30 (body only) |
-| 4 | Violet gargoyles | 40 |
+| 3 | Gargoyles | 30 (body only; wings neutral) |
+| 4 | Violet / dark-red gargoyles | 40 |
 | 5 | Boss saucer + escort birds | Core 200 · cells 1 · decorations 50 |
 
-Veteran: bird scores +10, boss core 300.  
-Bonus lives at **1 337** and **8 086** points.
+- Veteran: bird scores **+10**, boss core **300**.
+- Novice: slower enemies, 5 lives, no high-score entry; PHENIX lasts longer.
+- Bonus lives at **1 337** and **8 086** points.
 
 ## Options
 
-Persisted in `settings.json` (created at runtime, not shipped):
+Persisted in `settings.json` (created at runtime, **not** shipped in the repo):
 
 - Input mode, display (window / fullscreen / borderless)
 - SFX & music volume
-- Language
+- Language (13 locales)
 - FPS counter
+- Scanlines OFF / 1 / 2 / 3
+- Bezel style (fullscreen ultrawide)
 - Reset high scores
+
+Manual advanced key (edit `settings.json` when the game is closed): `monitor_index` for multi-monitor fullscreen.
 
 ## Project layout
 
 ```
 PhenixRebirth/
-├── main.py              # Entry point
-├── lancer.bat           # Windows launcher
+├── main.py
+├── lancer.bat
 ├── requirements.txt
-├── LICENSE              # MIT
-├── README.md
-├── src/                 # Game code
-│   ├── game.py          # Main loop, menus, combat
-│   ├── player.py
-│   ├── enemy.py
-│   ├── boss.py
-│   ├── starfield.py
-│   ├── explosion.py
-│   ├── sounds.py
-│   ├── i18n.py
-│   ├── highscores.py
-│   └── settings.py
-└── assets/
-    ├── sprites/
-    ├── logo/
-    ├── sounds/
-    └── music/
+├── LICENSE
+├── VERSION
+├── assets/          # sprites, music, SFX, logo
+└── src/             # game, player, enemies, boss, i18n…
 ```
 
-## Credits
+## Development
 
-**Development**  
 Franck Fornasari (Kraran)
 
-**Technical assistance & design**  
-Grok — xAI
+Music: *Phenix — Eternal Dawn*, *Eternal Dawn (Game Over)*, *Last Coin (Credits)* — created with [Suno](https://suno.com).
 
-**Original game (inspiration only)**  
-*Phoenix* (1978 / 1980) — Amstar Electronics / Centuri / Taito  
-
-This repository contains **original code and newly created assets**. It does **not** include the original arcade ROM, board data, or copyrighted arcade graphics/audio from *Phoenix*. Gameplay structure is an homage; names and branding here (*Phenix Rebirth*) are distinct.
-
-**Music**  
-- Phenix — Eternal Dawn  
-- Phenix — Eternal Dawn (Game Over)  
-
-Generated with [Suno](https://suno.com/). Redistribution and commercial use of these tracks must comply with **Suno’s terms** for the account that created them. The MIT license on this repository covers the game code and non-Suno assets; it does **not** override Suno’s rules for the MP3 files under `assets/music/`.
-
-**Visual assets**  
-Player ship, enemies, boss, logo animation, starfield planets/nebulae, and UI art were created or adapted for this project (including AI-assisted generation). They are not rips from the original arcade game.
-
-**Technology**  
-Python 3 · Pygame 2 · SDL_mixer
+Tech: Python, Pygame, delta-time action loop.
 
 ## License
 
-- **Code & original project assets** (except as noted below): [MIT License](LICENSE)  
-- **Music (`assets/music/`)** : subject to [Suno Terms of Service](https://suno.com/terms) in addition to any rights you hold as the generator  
-- **Arcade *Phoenix*** : trademark/copyright of their respective owners; no claim of ownership or endorsement
+MIT — see [LICENSE](LICENSE).
 
-If you are a rights holder and believe something here infringes, open an issue and we will address it promptly.
+## Disclaimer
 
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for planned improvements (144 Hz, scanlines, packaging, etc.).
-
-## Contributing
-
-Issues and pull requests are welcome. Please keep changes focused and test **keyboard + gamepad** when touching input or menus.
-
-Use the issue templates under `.github/ISSUE_TEMPLATE/` when reporting bugs or proposing features.
+This is a fan-made tribute. All trademarks belong to their respective owners.

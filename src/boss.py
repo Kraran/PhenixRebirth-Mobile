@@ -10,8 +10,10 @@ Purple band cells scroll horizontally to complicate core shots.
 """
 import pygame
 import math
+import os
 import random
 from settings import *
+from settings import asset_path
 
 class ArmorCell:
     def __init__(self, x, y, w, h, color, color_dark):
@@ -110,8 +112,33 @@ class BossBullet:
 
 
 class BossCore:
-    """The alien in the center of the saucer — 200 pts."""
+    """Cthulhu-esque alien core in the saucer center — 200 / 300 pts."""
+    _image = None
+    _image_white = None
+
+    @classmethod
+    def _load_images(cls):
+        if cls._image is not None:
+            return
+        path = asset_path("sprites", "boss_core.png")
+        try:
+            cls._image = pygame.image.load(path).convert_alpha()
+        except Exception as e:
+            print("boss_core load failed:", e)
+            cls._image = None
+            return
+        # White flash version
+        w, h = cls._image.get_size()
+        white = pygame.Surface((w, h), pygame.SRCALPHA)
+        for yy in range(h):
+            for xx in range(w):
+                r, g, b, a = cls._image.get_at((xx, yy))
+                if a > 20:
+                    white.set_at((xx, yy), (255, 255, 255, a))
+        cls._image_white = white
+
     def __init__(self, x, y):
+        BossCore._load_images()
         self.base_x = float(x)
         self.base_y = float(y)
         self.x = float(x)
@@ -122,6 +149,11 @@ class BossCore:
         self.DEATH_DURATION = 1.2
         self.time = 0.0
         self.hit_flash = 0.0
+        if BossCore._image is not None:
+            self.w = BossCore._image.get_width()
+            self.h = BossCore._image.get_height()
+        else:
+            self.w, self.h = 28, 32
 
     def update(self, dt):
         self.time += dt
@@ -141,37 +173,34 @@ class BossCore:
     def get_hitbox(self):
         if not self.alive or self.dying:
             return pygame.Rect(0, 0, 0, 0)
-        return pygame.Rect(int(self.x - 14), int(self.y - 16), 28, 32)
+        hw = max(20, int(self.w * 0.55))
+        hh = max(22, int(self.h * 0.55))
+        return pygame.Rect(int(self.x - hw // 2), int(self.y - hh // 2), hw, hh)
 
     def draw(self, surface):
         if not self.alive:
             return
-        t = self.time
-        by = self.y + math.sin(t * 3.0) * 2
+        bob = self.y + math.sin(self.time * 3.0) * 2
 
         if self.dying:
             alpha_t = 1.0 - self.death_timer / self.DEATH_DURATION
             for i in range(5, 0, -1):
-                r = int(20 + self.death_timer * 80 * i / 5)
+                r = int(22 + self.death_timer * 90 * i / 5)
                 c = int(255 * alpha_t * (0.4 + 0.1 * i))
-                pygame.draw.circle(surface, (c, c // 3, c // 2), (int(self.x), int(by)), r, 2)
+                pygame.draw.circle(surface, (c, c // 3, c // 2), (int(self.x), int(bob)), r, 2)
             return
 
         flash = self.hit_flash > 0 and int(self.hit_flash * 20) % 2 == 0
-        body = (255, 255, 255) if flash else (200, 60, 160)
-        body_d = (120, 20, 90)
-        eye = (255, 240, 80)
-
-        cx, cy = int(self.x), int(by)
-        pygame.draw.ellipse(surface, body, (cx - 14, cy - 8, 28, 28))
-        pygame.draw.ellipse(surface, body_d, (cx - 10, cy, 20, 16))
-        pygame.draw.ellipse(surface, body, (cx - 12, cy - 20, 24, 20))
-        pygame.draw.circle(surface, eye, (cx - 5, cy - 12), 3)
-        pygame.draw.circle(surface, eye, (cx + 5, cy - 12), 3)
-        pygame.draw.circle(surface, (20, 10, 20), (cx - 5, cy - 12), 1)
-        pygame.draw.circle(surface, (20, 10, 20), (cx + 5, cy - 12), 1)
-        pygame.draw.line(surface, body, (cx - 14, cy + 4), (cx - 22, cy + 14), 3)
-        pygame.draw.line(surface, body, (cx + 14, cy + 4), (cx + 22, cy + 14), 3)
+        img = BossCore._image
+        if img is None:
+            # Fallback procedural
+            cx, cy = int(self.x), int(bob)
+            col = (255, 255, 255) if flash else (40, 90, 70)
+            pygame.draw.ellipse(surface, col, (cx - 14, cy - 16, 28, 32))
+            return
+        if flash and BossCore._image_white is not None:
+            img = BossCore._image_white
+        surface.blit(img, (int(self.x - self.w // 2), int(bob - self.h // 2)))
 
 
 class BossSaucer:
@@ -301,10 +330,31 @@ class BossSaucer:
             y = brick_top - deco_h / 2  # flush: deco bottom == brick top
             self.decorations.append(SaucerDecoration(top.base_x, y, kind))
 
-        self.boss = BossCore(cx, top_y + 4)
+        BossCore._image = None
+        BossCore._image_white = None
+        self.boss = BossCore(cx, top_y + 18)
         self.base_cx = cx
         self.top_y = top_y
         self.cell_w = cell_w - 2
+
+        # No armor cells over the core hitbox (leave a clear window on the monster)
+        core_r = self.boss.get_hitbox().inflate(10, 14)
+        kept = []
+        for c in self.cells:
+            cr = pygame.Rect(
+                int(c.base_x - c.w / 2), int(c.base_y - c.h / 2), c.w, c.h
+            )
+            if cr.colliderect(core_r):
+                continue
+            kept.append(c)
+        self.cells = kept
+        # Rebuild purple scroll list after filtering
+        self.purple_cells = []
+        for c in self.cells:
+            if c.color == c_purple:
+                c.is_purple = True
+                c.scroll_base_x = c.base_x
+                self.purple_cells.append(c)
 
     def _sync_positions(self):
         for c in self.cells:
