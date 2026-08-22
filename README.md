@@ -18,6 +18,12 @@ Free to play · Open source · MIT License
 |------|------|----------------|
 | ![Title screen](docs/screenshots/accueil.png) | ![Help](docs/screenshots/aide.png) | ![Gameplay](docs/screenshots/ingame.png) |
 
+## Gameplay
+
+[![Phenix Rebirth gameplay](https://img.youtube.com/vi/NIiuKcSgEOk/maxresdefault.jpg)](https://youtu.be/NIiuKcSgEOk)
+
+[Watch on YouTube](https://youtu.be/NIiuKcSgEOk) · [Play on itch.io](https://kraran.itch.io/phenix-rebirth)
+
 ## Features
 
 - Faithful stage cycle inspired by the arcade original (birds → gargoyles → boss saucer)
