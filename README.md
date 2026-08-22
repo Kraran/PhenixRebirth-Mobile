@@ -1,8 +1,6 @@
 # Phenix Rebirth
 
-**Version 0.2.0-rc.1** (Release Candidate)
-
-> Pre-release for testing. Feedback welcome before the stable **0.2.0** tag.
+**Version 1.0.0**
 
 A modern, ultra-responsive PC remake of the classic arcade shooter **Phoenix** (1978 / 1980).
 
@@ -13,7 +11,6 @@ Free to play · Open source · MIT License
 > or any related rights holder.
 
 ---
-
 
 ## Screenshots
 
@@ -30,10 +27,10 @@ Free to play · Open source · MIT License
 - Keyboard & gamepad (hot-plug while in menus)
 - Local high scores (top 15)
 - 13 languages
-- Attract mode (AI demo) + help screen
+- Attract mode (AI demo) + two-page help screen
 - Difficulty: Novice / Normal / Veteran
 - Optional CRT **scanlines** (3 intensity levels)
-- Arcade bezels on ultrawide fullscreen
+- Arcade bezels on ultrawide fullscreen (Phenix, Tesla, Blue, Flame)
 
 ## Requirements
 
@@ -103,10 +100,12 @@ Manual advanced key (edit `settings.json` when the game is closed): `monitor_ind
 PhenixRebirth/
 ├── main.py
 ├── lancer.bat
+├── build_exe.bat
 ├── requirements.txt
 ├── LICENSE
 ├── VERSION
 ├── assets/          # sprites, music, SFX, logo
+├── docs/screenshots/
 └── src/             # game, player, enemies, boss, i18n…
 ```
 

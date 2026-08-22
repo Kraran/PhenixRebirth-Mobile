@@ -1,49 +1,41 @@
 # Roadmap — Phenix Rebirth
 
-Current: **v0.2.0-rc.1** (Release Candidate)
+Current release: **v1.0.0**
 
-## Next milestone
+## Done in 1.0.0
 
-- [ ] **v0.2.0 stable** — after RC feedback (bugs, balance, packaging)
+- PHENIX transform mode (gauge, morph, dual fire, cancel + cooldown)
+- New ship / firebird art, boss core, enemy pass
+- CRT scanlines (3 levels)
+- Multiple ultrawide bezels (Phenix, Tesla, Blue, Flame)
+- Two-page help (incl. PHENIX) + richer starfield (planets & galaxies)
+- Credits polish, i18n, collision / difficulty / pause fixes
+- Windows build via `build_exe.bat`
 
-## Done in 0.2.0-rc.1
+## Done earlier
 
-- PHENIX transform mode (gauge, morph anim, dual fire, cancel + cooldown)
-- New player ship + firebird / morph sprites
-- Boss core redesign; updated enemy art (birds, gargoyles)
-- CRT scanlines (3 levels) in Options
-- Collision / difficulty / pause-quit fixes
-- Credits music (*Last Coin*)
-- README screenshots + GitHub pre-release (`v0.2.0-rc.1` + Windows zip)
+- **0.2.0-rc.1** — feature-complete release candidate
+- **0.1.0** — stages 1–5, boss, difficulties, high scores, 13 languages, attract mode
 
-## Done in 0.1.0
-
-- Stages 1–5 + infinite loop with speed scaling
-- Boss saucer, difficulties, high scores, i18n (13 languages)
-- Keyboard / gamepad, pause, options, attract mode
-- Music, SFX, animated logo
-- First Windows build via `build_exe.bat`
-
-## Planned
+## Planned (post-1.0)
 
 ### Play & feel
-- [ ] Native **144 Hz** path (alongside 60 / 120)
-- [ ] Fine-tune attract AI and stage balance
+- [ ] Native **144 Hz** path
+- [ ] Attract AI / balance fine-tuning
 - [ ] Extra bezel styles
-- [ ] Optional short trailer / GIF for the store page
 
 ### Packaging
-- [x] Windows zip on GitHub Releases (RC)
-- [ ] Polished one-click / one-file Windows build if needed
+- [ ] Optional one-file Windows build
 - [ ] Linux package notes
-- [ ] Optional itch.io / GameJolt page
+- [ ] Batocera / `.pygame` pack
+- [ ] itch.io / GameJolt page
 
 ### Code health
 - [ ] Split `src/game.py` into menus / combat modules
-- [ ] Broader automated tests beyond syntax CI
+- [ ] Broader automated tests
 
 ### Meta
-- [x] Screenshots on the README
-- [ ] Additional languages if contributors provide them
+- [ ] Trailer / GIF
+- [ ] Additional languages from contributors
 
 Suggestions welcome via GitHub Issues.
