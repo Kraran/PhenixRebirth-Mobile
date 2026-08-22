@@ -170,6 +170,11 @@ class Game:
         self.quit_index = 1  # default Non
         self.menu_idle = 0.0
         self.help_timer = 0.0
+        self.help_page = 0  # 0 = scenario/points, 1 = PHENIX
+        self.help_scroll = 0.0  # transition offset in pixels
+        self.help_transitioning = False
+        self.HELP_PAGE_SEC = 10.0
+        self.HELP_SCROLL_SEC = 0.42
         self.help_first_shown = False  # first attract uses longer delay
         self.attract_mode = False
         self.attract_timer = 0.0
@@ -281,15 +286,19 @@ class Game:
         self._scanline_level_cached = None
         if not hasattr(self, "bezel_style"):
             self.bezel_style = user.get("bezel_style", "phoenix")
-            if self.bezel_style not in ("off", "phoenix"):
-                self.bezel_style = "phoenix"
         if not hasattr(self, "monitor_index"):
             self.monitor_index = int(user.get("monitor_index", 0) or 0)
-        # Registry of available bezels (id → left/right asset names). Extend later.
+        # Registry of available bezels (id → i18n key)
         self.BEZEL_STYLES = [
             ("off", "bezel_off"),
             ("phoenix", "bezel_phoenix"),
+            ("tesla", "bezel_tesla"),
+            ("blue", "bezel_blue"),
+            ("fire", "bezel_fire"),
         ]
+        valid = {s[0] for s in self.BEZEL_STYLES}
+        if getattr(self, "bezel_style", "phoenix") not in valid:
+            self.bezel_style = "phoenix"
         
         # Joystick menu navigation cooldown (anti spam)
         self._joy_menu_cooldown = 0.0
@@ -626,17 +635,35 @@ class Game:
 
 
 
+    def _bezel_asset_names(self, style=None):
+        """Return (left_file, right_file) for a bezel style id."""
+        style = style if style is not None else getattr(self, "bezel_style", "phoenix")
+        mapping = {
+            "phoenix": ("bezel_left.png", "bezel_right.png"),
+            "tesla": ("bezel_tesla_left.png", "bezel_tesla_right.png"),
+            "blue": ("bezel_blue_left.png", "bezel_blue_right.png"),
+            "fire": ("bezel_fire_left.png", "bezel_fire_right.png"),
+        }
+        return mapping.get(style, (None, None))
+
     def _load_bezel_images(self):
-        """Load left/right arcade bezel artwork (ultrawide side panels)."""
+        """Load left/right arcade bezel artwork for the current style."""
         self.bezel_left_img = None
         self.bezel_right_img = None
+        style = getattr(self, "bezel_style", "phoenix")
+        if style in (None, "", "off"):
+            self._invalidate_present_cache()
+            return
+        left_name, right_name = self._bezel_asset_names(style)
         try:
-            lp = asset_path("sprites", "bezel_left.png")
-            rp = asset_path("sprites", "bezel_right.png")
-            if os.path.exists(lp):
-                self.bezel_left_img = pygame.image.load(lp).convert()
-            if os.path.exists(rp):
-                self.bezel_right_img = pygame.image.load(rp).convert()
+            if left_name:
+                lp = asset_path("sprites", left_name)
+                if os.path.exists(lp):
+                    self.bezel_left_img = pygame.image.load(lp).convert()
+            if right_name:
+                rp = asset_path("sprites", right_name)
+                if os.path.exists(rp):
+                    self.bezel_right_img = pygame.image.load(rp).convert()
             self._invalidate_present_cache()
         except Exception as e:
             print("Bezel images not loaded:", e)
@@ -1149,6 +1176,7 @@ class Game:
             cur = getattr(self, "bezel_style", "phoenix")
             idx = styles.index(cur) if cur in styles else 0
             self.bezel_style = styles[(idx + direction) % len(styles)]
+            self._load_bezel_images()
             self._layout_viewport()
             self._invalidate_present_cache()
             if self.bezel_active:
@@ -1225,6 +1253,141 @@ class Game:
             core = pygame.Surface((36, 40), pygame.SRCALPHA)
             pygame.draw.ellipse(core, (40, 90, 70), (4, 4, 28, 32))
             self.help_icons["boss"] = core
+        # Ship + Phenix form for help page 2
+        try:
+            ship = pygame.image.load(asset_path("sprites", "player_ship.png")).convert_alpha()
+            sh = 72
+            scale = sh / max(1, ship.get_height())
+            sw = max(1, int(ship.get_width() * scale))
+            self.help_icons["ship"] = pygame.transform.smoothscale(ship, (sw, sh))
+        except Exception:
+            self.help_icons["ship"] = None
+        phenix_img = None
+        phenix_dir = asset_path("sprites", "phenix")
+        # Prefer a mid morph / flight frame
+        for name in ("phenix_04.png", "phenix_03.png", "morph_03.png", "phenix_00.png"):
+            path = os.path.join(phenix_dir, name)
+            if os.path.isfile(path):
+                try:
+                    phenix_img = pygame.image.load(path).convert_alpha()
+                    break
+                except Exception:
+                    pass
+        if phenix_img is not None:
+            ph = 80
+            scale = ph / max(1, phenix_img.get_height())
+            pw = max(1, int(phenix_img.get_width() * scale))
+            self.help_icons["phenix"] = pygame.transform.smoothscale(phenix_img, (pw, ph))
+        else:
+            self.help_icons["phenix"] = None
+
+
+    def _draw_help_page(self, surface, page, y_off):
+        """Draw help page 0 (scenario/points) or 1 (PHENIX). y_off shifts content."""
+        def yy(y):
+            return int(y + y_off)
+
+        title = self.big_font.render("PHENIX REBIRTH", True, (255, 120, 255))
+        surface.blit(title, (BASE_WIDTH // 2 - title.get_width() // 2, yy(28)))
+        sub = self.font.render(t("subtitle"), True, (180, 160, 220))
+        surface.blit(sub, (BASE_WIDTH // 2 - sub.get_width() // 2, yy(82)))
+
+        if page <= 0:
+            col_l = 48
+            y = 120
+
+            def hdr(txt, y):
+                s = self.medium_font.render(txt, True, (255, 200, 120))
+                surface.blit(s, (col_l, yy(y)))
+                return y + 34
+
+            def body(txt, y):
+                s = self.font.render(txt, True, (200, 200, 230))
+                surface.blit(s, (col_l, yy(y)))
+                return y + 24
+
+            y = hdr(t_help("scenario_h"), y)
+            for line in t_list("scenario"):
+                y = body(line, y)
+            y += 10
+            y = hdr(t_help("howto_h"), y)
+            for line in t_list("howto"):
+                y = body(line, y)
+            y += 10
+            y = hdr(t_help("controls_h"), y)
+            for line in t_list("controls"):
+                y = body(line, y)
+
+            col_r = BASE_WIDTH // 2 + 90
+            y = 120
+            s = self.medium_font.render(t_help("points_h"), True, (255, 200, 120))
+            surface.blit(s, (col_r, yy(y)))
+            y += 40
+            score_rows = [
+                ("bird1", t_help("enemy_s1"), "10"),
+                ("bird2", t_help("enemy_s2"), "20"),
+                ("garg3", t_help("enemy_s3"), "30"),
+                ("garg4", t_help("enemy_s4"), "40"),
+                ("boss", t_help("enemy_boss"), "200"),
+            ]
+            for key, label, pts in score_rows:
+                ix, iy = col_r + 28, yy(y + 14)
+                if key == "bird1" and "bird1" in self.help_icons:
+                    img = self.help_icons["bird1"]
+                    surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
+                elif key == "bird2" and "bird2" in self.help_icons:
+                    img = self.help_icons["bird2"]
+                    surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
+                elif key == "garg3" and "garg3" in self.help_icons:
+                    self._draw_help_gargoyle(surface, self.help_icons["garg3"], ix, iy, 0.5)
+                elif key == "garg4" and "garg4" in self.help_icons:
+                    self._draw_help_gargoyle(surface, self.help_icons["garg4"], ix, iy, 0.5)
+                elif key == "boss" and "boss" in self.help_icons:
+                    img = self.help_icons["boss"]
+                    surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
+                ls = self.font.render(label, True, (200, 200, 230))
+                surface.blit(ls, (col_r + 60, yy(y + 4)))
+                ps = self.font.render(pts + " " + t_help("pts"), True, (110, 255, 150))
+                surface.blit(ps, (col_r + 60, yy(y + 26)))
+                y += 54
+            note = self.font.render(t_help("vet_note"), True, (180, 160, 200))
+            surface.blit(note, (col_r, yy(y + 2)))
+            y += 26
+            note2 = self.font.render(t_help("bonus_lives"), True, (180, 160, 220))
+            surface.blit(note2, (col_r, yy(y)))
+        else:
+            # Page 2 — PHENIX mechanics (centered, airy) + ship / firebird art
+            y = 120
+            s = self.medium_font.render(t_help("phenix_h"), True, (255, 160, 80))
+            surface.blit(s, (BASE_WIDTH // 2 - s.get_width() // 2, yy(y)))
+            y += 42
+            for line in t_list("phenix"):
+                s = self.font.render(line, True, (210, 210, 235))
+                surface.blit(s, (BASE_WIDTH // 2 - s.get_width() // 2, yy(y)))
+                y += 28
+            y += 12
+            tip = self.font.render("Shift / X  ·  B", True, (255, 220, 120))
+            surface.blit(tip, (BASE_WIDTH // 2 - tip.get_width() // 2, yy(y)))
+            y += 40
+            # Illustrations: normal ship | arrow | phenix form
+            ship = self.help_icons.get("ship")
+            phenix = self.help_icons.get("phenix")
+            gap = 48
+            total_w = 0
+            if ship is not None:
+                total_w += ship.get_width()
+            if phenix is not None:
+                total_w += phenix.get_width()
+            total_w += gap + 40  # arrow space
+            x0 = BASE_WIDTH // 2 - total_w // 2
+            if ship is not None:
+                surface.blit(ship, (x0, yy(y)))
+                x0 += ship.get_width() + gap // 2
+            arrow = self.medium_font.render(">>>", True, (255, 180, 80))
+            surface.blit(arrow, (x0, yy(y + 28)))
+            x0 += arrow.get_width() + gap // 2
+            if phenix is not None:
+                surface.blit(phenix, (x0, yy(y)))
 
     def _draw_help_gargoyle(self, surface, bird, x, y, scale=0.55):
         """Draw animated gargoyle icon centered at (x, y)."""
@@ -2042,6 +2205,9 @@ class Game:
                             self.help_first_shown = True
                             self.menu_screen = "help"
                             self.help_timer = 0.0
+                            self.help_page = 0
+                            self.help_scroll = 0.0
+                            self.help_transitioning = False
                             self.next_is_attract = True
                         elif self.next_is_attract:
                             self.next_is_attract = False
@@ -2050,14 +2216,31 @@ class Game:
                             self.next_is_attract = True
                             self.menu_screen = "help"
                             self.help_timer = 0.0
+                            self.help_page = 0
+                            self.help_scroll = 0.0
+                            self.help_transitioning = False
                 elif self.menu_screen == "help":
-                    self.help_timer += self.dt
                     self.help_anim_t += self.dt
-                    if self.help_timer >= 10.0:
-                        self.menu_screen = "main"
-                        self.menu_index = 0
-                        self.menu_idle = 0.0
-                        self.help_timer = 0.0
+                    if self.help_transitioning:
+                        # Smooth vertical slide page 0 → page 1
+                        self.help_scroll += self.dt / max(0.05, self.HELP_SCROLL_SEC) * BASE_HEIGHT
+                        if self.help_scroll >= BASE_HEIGHT:
+                            self.help_scroll = 0.0
+                            self.help_transitioning = False
+                            self.help_page = 1
+                            self.help_timer = 0.0
+                    else:
+                        self.help_timer += self.dt
+                        if self.help_timer >= self.HELP_PAGE_SEC:
+                            if self.help_page <= 0:
+                                self.help_transitioning = True
+                                self.help_scroll = 0.0
+                            else:
+                                self.menu_screen = "main"
+                                self.menu_index = 0
+                                self.menu_idle = 0.0
+                                self.help_timer = 0.0
+                                self.help_page = 0
                 else:
                     self.menu_idle = 0.0
             return
@@ -2516,84 +2699,21 @@ class Game:
                 self.game_surface.blit(sub, (BASE_WIDTH // 2 - sub.get_width() // 2, 8 + logo_h - 4))
             
             if self.menu_screen == "help":
-                import math as _math
-                # Title
-                title = self.big_font.render("PHENIX REBIRTH", True, (255, 120, 255))
-                self.game_surface.blit(title, (BASE_WIDTH // 2 - title.get_width() // 2, 28))
-                sub = self.font.render(t("subtitle"), True, (180, 160, 220))
-                self.game_surface.blit(sub, (BASE_WIDTH // 2 - sub.get_width() // 2, 82))
-                
-                # --- Left column: scenario + how to play ---
-                col_l = 40
-                y = 130
-                def hdr(txt, yy):
-                    s = self.medium_font.render(txt, True, (255, 200, 120))
-                    self.game_surface.blit(s, (col_l, yy))
-                    return yy + 36
-                def body(txt, yy):
-                    s = self.font.render(txt, True, (200, 200, 230))
-                    self.game_surface.blit(s, (col_l, yy))
-                    return yy + 26
-                
-                y = hdr(t_help("scenario_h"), y)
-                for line in t_list("scenario"):
-                    y = body(line, y)
-                y += 12
-                y = hdr(t_help("howto_h"), y)
-                for line in t_list("howto"):
-                    y = body(line, y)
-                y += 12
-                y = hdr(t_help("controls_h"), y)
-                for line in t_list("controls"):
-                    y = body(line, y)
-                
-                # --- Right column: scores with sprites ---
-                col_r = BASE_WIDTH // 2 + 100
-                y = 130
-                y = hdr("POINTS", y) if False else y
-                s = self.medium_font.render(t_help("points_h"), True, (255, 200, 120))
-                self.game_surface.blit(s, (col_r, y))
-                y += 44
-                
-                score_rows = [
-                    ("bird1", t_help("enemy_s1"), "10"),
-                    ("bird2", t_help("enemy_s2"), "20"),
-                    ("garg3", t_help("enemy_s3"), "30"),
-                    ("garg4", t_help("enemy_s4"), "40"),
-                    ("boss", t_help("enemy_boss"), "200"),
-                ]
-                for key, label, pts in score_rows:
-                    # icon
-                    ix, iy = col_r + 28, y + 14
-                    if key == "bird1" and "bird1" in self.help_icons:
-                        img = self.help_icons["bird1"]
-                        self.game_surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
-                    elif key == "bird2" and "bird2" in self.help_icons:
-                        img = self.help_icons["bird2"]
-                        self.game_surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
-                    elif key == "garg3" and "garg3" in self.help_icons:
-                        self._draw_help_gargoyle(self.game_surface, self.help_icons["garg3"], ix, iy, 0.5)
-                    elif key == "garg4" and "garg4" in self.help_icons:
-                        self._draw_help_gargoyle(self.game_surface, self.help_icons["garg4"], ix, iy, 0.5)
-                    elif key == "boss" and "boss" in self.help_icons:
-                        img = self.help_icons["boss"]
-                        self.game_surface.blit(img, (ix - img.get_width() // 2, iy - img.get_height() // 2))
-                    # label + pts
-                    ls = self.font.render(label, True, (200, 200, 230))
-                    self.game_surface.blit(ls, (col_r + 60, y + 4))
-                    ps = self.font.render(pts + " " + t_help("pts"), True, (110, 255, 150))
-                    self.game_surface.blit(ps, (col_r + 60, y + 26))
-                    y += 58
-                
-                note = self.font.render(t_help("vet_note"), True, (180, 160, 200))
-                self.game_surface.blit(note, (col_r, y + 4))
-                y += 30
-                note2 = self.font.render(t_help("bonus_lives"), True, (180, 160, 220))
-                self.game_surface.blit(note2, (col_r, y))
-                
+                # Two pages with optional vertical scroll transition
+                if self.help_transitioning:
+                    off = int(self.help_scroll)
+                    self._draw_help_page(self.game_surface, 0, -off)
+                    self._draw_help_page(self.game_surface, 1, BASE_HEIGHT - off)
+                else:
+                    self._draw_help_page(self.game_surface, self.help_page, 0)
                 hint = self.font.render(t("help_return"), True, (255, 220, 100))
                 self.game_surface.blit(hint, (BASE_WIDTH // 2 - hint.get_width() // 2, BASE_HEIGHT - 36))
-            
+                page_lbl = self.font.render(
+                    f"{t_help('help_page')} {int(self.help_page) + 1}/2",
+                    True, (140, 140, 180),
+                )
+                self.game_surface.blit(page_lbl, (BASE_WIDTH - page_lbl.get_width() - 20, BASE_HEIGHT - 36))
+
             elif self.menu_screen == "main":
                 diff_key = {"novice": "diff_novice", "normal": "diff_normal", "veteran": "diff_veteran"}.get(self.difficulty, "diff_normal")
                 diff = t(diff_key)
@@ -2653,13 +2773,15 @@ class Game:
                 credits_lines = get_credits_lines()
                 for kind, _ in credits_lines:
                     if kind == "title":
-                        heights.append(logo_h + 12)
+                        heights.append(logo_h + 28)
                     elif kind == "header":
-                        heights.append(42)
+                        heights.append(46)
                     elif kind == "blank":
-                        heights.append(28)
+                        heights.append(40)
+                    elif kind == "sub":
+                        heights.append(36)
                     else:
-                        heights.append(32)
+                        heights.append(34)
                 total_h = sum(heights)
                 y0 = self.credits_scroll
                 if y0 < -total_h:

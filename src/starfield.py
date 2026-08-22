@@ -2,7 +2,7 @@
 Scrolling multi-layer starfield with parallax, planets, and nebulae.
 
 Stars are procedural; planets use solar-system inspired art; nebulae use
-Hubble-inspired assets. At most one planet or one nebula is visible at a time.
+Hubble-inspired assets. Usually one planet or one nebula; rarely both may share the screen.
 """
 import pygame
 import random
@@ -17,6 +17,9 @@ NEBULA_FILES = [
     "galaxy_andromeda.png",
     "galaxy_whirlpool.png",
     "galaxy_elliptical.png",
+    "galaxy_blackhole.png",
+    "galaxy_milkyway.png",
+    "galaxy_collision.png",
     "nebula_orion.png",
     "nebula_helix.png",
     "nebula_dark.png",
@@ -28,6 +31,7 @@ PLANET_FILES = [
     "earth.png",
     "mars.png",
     "jupiter.png",
+    "fantasy_rings.png",
     "saturn.png",
     "uranus.png",
     "neptune.png",
@@ -145,7 +149,11 @@ class Planet:
     def reset(self):
         filename = random.choice(PLANET_FILES)
         base = self._load_image(filename)
-        target_h = random.randint(36, 88)
+        # Ringed fantasy planet reads better a bit larger
+        if "fantasy" in filename or "saturn" in filename:
+            target_h = random.randint(48, 110)
+        else:
+            target_h = random.randint(36, 88)
         scale = target_h / max(1, base.get_height())
         w = max(1, int(base.get_width() * scale))
         h = max(1, int(base.get_height() * scale))
@@ -331,8 +339,14 @@ class Starfield:
 
         self.planet_timer -= dt
         if self.planet_timer <= 0:
-            if len(self.planets) == 0 and self.nebula is None:
-                self.planets.append(Planet())
+            # Prefer exclusive; when the other is already up, ~40% dual.
+            # Also ~12% chance to invite a nebula right after a lone planet.
+            if len(self.planets) == 0:
+                if self.nebula is None or random.random() < 0.40:
+                    self.planets.append(Planet())
+                    if self.nebula is None and random.random() < 0.12:
+                        self.nebula = Nebula()
+                        self.nebula_timer = random.uniform(18.0, 32.0)
             self.planet_timer = random.uniform(16.0, 30.0)
 
         self.galaxy_timer -= dt
@@ -342,8 +356,12 @@ class Starfield:
 
         self.nebula_timer -= dt
         if self.nebula_timer <= 0:
-            if self.nebula is None and len(self.planets) == 0:
-                self.nebula = Nebula()
+            if self.nebula is None:
+                if len(self.planets) == 0 or random.random() < 0.40:
+                    self.nebula = Nebula()
+                    if len(self.planets) == 0 and random.random() < 0.12:
+                        self.planets.append(Planet())
+                        self.planet_timer = random.uniform(14.0, 28.0)
             self.nebula_timer = random.uniform(22.0, 38.0)
 
     def draw(self, surface):
