@@ -59,6 +59,15 @@ python main.py
 
 **Windows:** double-click `lancer.bat` (installs pygame if needed, then launches the game).
 
+### Windows SmartScreen (release .exe)
+
+On first launch of the Windows build, Microsoft Defender SmartScreen may show **“Windows protected your PC”** / **“Windows a protégé votre ordinateur”**. This is normal for an **unsigned** indie executable (PyInstaller) and does **not** mean the file is malware.
+
+1. Click **More info** / **Informations complémentaires**
+2. Click **Run anyway** / **Exécuter quand même**
+
+Source is open (MIT) on this repository; you can also run from source with Python + Pygame if you prefer.
+
 ## Controls
 
 | Action | Keyboard | Gamepad |
