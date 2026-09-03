@@ -1,6 +1,6 @@
 # Phenix Rebirth
 
-**Version 1.0.0**
+**Version 1.1.0**
 
 A modern, ultra-responsive PC remake of the classic arcade shooter **Phoenix** (1978 / 1980).
 
@@ -30,8 +30,10 @@ Free to play · Open source · MIT License
 - **PHENIX mode** — charge a gauge with accurate shots, transform into a firebird (invulnerable, faster, dual flame shots)
 - Infinite progression: stages loop with rising speed after each boss
 - Smooth 60 / 120 Hz play with delta-time movement
-- Keyboard & gamepad (hot-plug while in menus)
-- Local high scores (top 15)
+- Keyboard & gamepad (hot-plug while in menus; AZERTY Z + fire keys in menus)
+- 1 player, 2-player **hot seat**, 2-player **coop** (separate scores & Phenix gauges, shared lives)
+- Optional autofire (hold to shoot when the previous shot has left the screen)
+- Local high scores (top 15, coop entries marked)
 - 13 languages
 - Attract mode (AI demo) + two-page help screen
 - Difficulty: Novice / Normal / Veteran
@@ -58,15 +60,6 @@ python main.py
 ```
 
 **Windows:** double-click `lancer.bat` (installs pygame if needed, then launches the game).
-
-### Windows SmartScreen (release .exe)
-
-On first launch of the Windows build, Microsoft Defender SmartScreen may show **“Windows protected your PC”** / **“Windows a protégé votre ordinateur”**. This is normal for an **unsigned** indie executable (PyInstaller) and does **not** mean the file is malware.
-
-1. Click **More info** / **Informations complémentaires**
-2. Click **Run anyway** / **Exécuter quand même**
-
-Source is open (MIT) on this repository; you can also run from source with Python + Pygame if you prefer.
 
 ## Controls
 
