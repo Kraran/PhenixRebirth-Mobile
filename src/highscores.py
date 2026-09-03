@@ -2,6 +2,7 @@
 Local high-score persistence (JSON).
 
 Stores the top 15 scores with 3-letter initials.
+Optional "coop" flag marks scores set in 2-player simultaneous mode.
 Default board is seeded with KRA / FFC / GRK for first launch.
 """
 # Phenix Rebirth - High scores (top 15)
@@ -33,6 +34,7 @@ def load_highscores():
                     cleaned.append({
                         "name": str(e["name"])[:3].upper().ljust(3, "A"),
                         "score": int(e["score"]),
+                        "coop": bool(e.get("coop", False)),
                     })
             if cleaned:
                 cleaned.sort(key=lambda x: x["score"], reverse=True)
@@ -65,8 +67,12 @@ def is_highscore(score, entries=None):
         return True
     return score > entries[-1]["score"]
 
-def insert_score(name, score, entries=None):
+def insert_score(name, score, entries=None, coop=False):
     if entries is None:
         entries = load_highscores()
-    entries.append({"name": name[:3].upper().ljust(3, "A"), "score": int(score)})
+    entries.append({
+        "name": name[:3].upper().ljust(3, "A"),
+        "score": int(score),
+        "coop": bool(coop),
+    })
     return save_highscores(entries)

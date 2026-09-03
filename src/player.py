@@ -1,9 +1,10 @@
 """
-Player ship: movement, single-bullet shot, edge lightning / kill timer,
-thruster animation, and multi-stage death sequences.
+Player ship: movement, single-shot (optional autofire), edge lightning /
+kill timer, thruster animation, Phenix transform, and death sequences.
 
-Input supports keyboard and gamepad with a short post-menu grace period
-to avoid accidental fire when confirming "Play".
+Input: keyboard (QWERTY + AZERTY ZQSD) and gamepad. Coop uses input_scheme
+kb1 / kb2 / pad. Wall slowdown and tesla FX are cleared on life loss so
+they never leak to the next life or the other hot-seat player.
 """
 import pygame
 import os
@@ -47,7 +48,7 @@ class Player:
                     self.phenix_frames.append(fr)
                 elif name.startswith("morph_") and name.endswith(".png"):
                     self.morph_frames.append(fr)
-        
+
         # Active shots: list of {x, y, resolved, flame}
         # Normal: max 1. Phenix: max 2 (pair from rear wings), one volley on screen.
         self.shots = []
@@ -69,6 +70,17 @@ class Player:
         
         self.lives = PLAYER_MAX_LIVES
         self.infinite_lives = False
+        self.use_shared_lives = False
+        self.input_scheme = "solo"  # solo | kb1 | kb2 | pad
+        self.palette = "red"  # red | blue
+        self.pid = 0
+        self.score = 0
+        self.life_flags = [False, False]
+        self.just_lost_life = False
+        self._shoot_held = False
+        self.autofire = True
+        self._joy = None
+        self._rumble_enabled = True
         self.invulnerable = 0.0
         self.alive = True
         
@@ -91,6 +103,8 @@ class Player:
         self.edge_timer = 0.0
         self.EDGE_KILL_TIME = 0.50
         self.edge_flash = 0.0
+        self.last_edge_side = 0
+        self.edge_death = False
         self.slowdown_timer = 0.0
         self.SLOWDOWN_DURATION = 1.7
         self.SLOWDOWN_FACTOR = 0.35
@@ -101,6 +115,22 @@ class Player:
         self.DEATH_DURATION = 0.70
         self.death_flash = False
         self._white_image = None
+
+    def apply_blue_palette(self):
+        """Dark-blue ship + icy Phenix (P2 coop)."""
+        self.palette = "blue"
+        def _tint(surf, rgb):
+            out = surf.copy()
+            overlay = pygame.Surface(out.get_size(), pygame.SRCALPHA)
+            overlay.fill((*rgb, 255))
+            out.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            return out
+        self.image = _tint(self.image, (70, 120, 255))
+        self._white_image = None
+        # Pale gas-flame blue (keep luminosity)
+        self.phenix_frames = [_tint(fr, (170, 220, 255)) for fr in self.phenix_frames]
+        self.morph_frames = [_tint(fr, (160, 210, 255)) for fr in self.morph_frames]
+        self.rect = self.image.get_rect(center=(self.x, self.y))
 
     def update(self, dt, keys, input_mode="keyboard", joystick=None, allow_shoot=True, ai_move=None, ai_shoot=None):
         if not self.alive:
@@ -156,6 +186,12 @@ class Player:
                 self.phenix_gauge = self.phenix_start_level * (self.phenix_timer / self.phenix_duration)
             if self.phenix_timer <= 0:
                 self.end_phenix(grant_invuln=True)
+            else:
+                # Soft purr while in Phenix form
+                self._purr_cd = getattr(self, "_purr_cd", 0.0) - dt
+                if self._purr_cd <= 0:
+                    self._purr_cd = 0.32
+                    self.rumble(0.16, 0.28, 300)
         elif self.phenix_auto_refill and self.alive and not self.dying and getattr(self, "morph_dir", 0) == 0:
             rate = 10.0 / max(0.1, self.PHENIX_REFILL_TIME)
             if self.phenix_gauge < 10.0:
@@ -164,6 +200,8 @@ class Player:
         dx = 0.0
         shoot_pressed = False
 
+        self._joy = joystick
+        self._rumble_enabled = ai_move is None
         # Attract-mode AI overrides human input when provided
         if ai_move is not None:
             # Same units as keyboard: -1 / 0 / +1 (speed applied later)
@@ -194,11 +232,28 @@ class Player:
             except Exception:
                 pass
         elif not _ai:
-            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-                dx -= 1.0
-            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-                dx += 1.0
-            shoot_pressed = keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]
+            scheme = getattr(self, "input_scheme", "solo")
+            if scheme == "kb1":
+                # Coop P1 keyboard: Q+A / D, Left Ctrl shoot
+                if keys[pygame.K_q] or keys[pygame.K_a]:
+                    dx -= 1.0
+                if keys[pygame.K_d]:
+                    dx += 1.0
+                shoot_pressed = keys[pygame.K_LCTRL]
+            elif scheme == "kb2":
+                # Coop P2 keyboard (same as 1P kb): arrows, Space / Right Ctrl
+                if keys[pygame.K_LEFT]:
+                    dx -= 1.0
+                if keys[pygame.K_RIGHT]:
+                    dx += 1.0
+                shoot_pressed = keys[pygame.K_SPACE] or keys[pygame.K_RCTRL]
+            else:
+                # 1P / hot-seat keyboard: arrows, Space or Right Ctrl
+                if keys[pygame.K_LEFT]:
+                    dx -= 1.0
+                if keys[pygame.K_RIGHT]:
+                    dx += 1.0
+                shoot_pressed = keys[pygame.K_SPACE] or keys[pygame.K_RCTRL]
         
         self.moving = dx != 0.0
         
@@ -224,11 +279,13 @@ class Player:
             if dx < 0:
                 self.edge_contact = True
                 self.edge_side = -1
+                self.last_edge_side = -1
         elif self.x >= right_limit:
             self.x = right_limit
             if dx > 0:
                 self.edge_contact = True
                 self.edge_side = 1
+                self.last_edge_side = 1
         
         if self.edge_contact and self.invulnerable <= 0:
             # Any edge spark empties Phenix gauge (and ends form if active)
@@ -243,13 +300,20 @@ class Player:
                     self.combo_streak = 0
                 self.edge_timer += dt
                 self.edge_flash = min(1.0, self.edge_timer / 0.25)
+                self.edge_flash = 1.0
                 if self.slowdown_timer <= 0:
                     self.slowdown_timer = self.SLOWDOWN_DURATION
+                    self.rumble(0.38, 0.62, int(self.SLOWDOWN_DURATION * 1000))
                 else:
                     self.slowdown_timer = max(self.slowdown_timer, 0.35)
         else:
             self.edge_timer = max(0.0, self.edge_timer - dt * 2.5)
-            self.edge_flash = max(0.0, self.edge_flash - dt * 4.0)
+            # Lightning lasts as long as the slowdown
+            if self.slowdown_timer > 0:
+                frac = self.slowdown_timer / max(0.05, self.SLOWDOWN_DURATION)
+                self.edge_flash = max(0.28, min(1.0, frac))
+            else:
+                self.edge_flash = max(0.0, self.edge_flash - dt * 4.0)
         
         self.rect.center = (int(self.x), int(self.y))
         
@@ -265,8 +329,11 @@ class Player:
                     self.register_miss()
                 self.shots.remove(shot)
         
-        if allow_shoot and shoot_pressed and not self.shots:
-            self.shoot()
+        fire = bool(allow_shoot and shoot_pressed and not self.shots)
+        if fire:
+            if getattr(self, "autofire", True) or not getattr(self, "_shoot_held", False):
+                self.shoot()
+        self._shoot_held = bool(shoot_pressed)
         
         return self._check_edge_kill()
 
@@ -275,7 +342,15 @@ class Player:
             if self.invulnerable <= 0 and not self.is_phenix:
                 self.hit()
                 self.edge_timer = 0.0
-                self.edge_flash = 0.0
+                self.slowdown_timer = 0.0
+                self.last_edge_side = self.last_edge_side or self.edge_side or -1
+                if self.dying:
+                    # Tesla + ship arcs only for this edge-death animation
+                    self.edge_death = True
+                    self.edge_flash = 1.0
+                else:
+                    self.edge_death = False
+                    self.edge_flash = 0.0
                 return True  # damage applied
         return False
 
@@ -296,6 +371,36 @@ class Player:
             ]
         if getattr(self, "sounds", None):
             self.sounds.play("shoot", volume=0.45)
+
+    def rumble(self, low, high, duration_ms):
+        """Gamepad vibration if a pad is present. Silent no-op otherwise.
+        Intensity 0–5 (3 = default)."""
+        if not getattr(self, "_rumble_enabled", True):
+            return
+        level = int(getattr(self, "rumble_level", 3) or 0)
+        if level <= 0:
+            return
+        joy = getattr(self, "_joy", None)
+        if joy is None:
+            return
+        scale = level / 3.0
+        low = max(0.0, min(1.0, float(low) * scale))
+        high = max(0.0, min(1.0, float(high) * scale))
+        try:
+            if hasattr(joy, "rumble"):
+                joy.rumble(low, high, int(duration_ms))
+        except Exception:
+            pass
+
+    def stop_rumble(self):
+        joy = getattr(self, "_joy", None)
+        if joy is None:
+            return
+        try:
+            if hasattr(joy, "stop_rumble"):
+                joy.stop_rumble()
+        except Exception:
+            pass
 
     def destroy_bullet(self, result=None, index=None):
         """Remove one shot (index) or all. result: 'valid' | 'neutral' | None."""
@@ -445,9 +550,13 @@ class Player:
             return False
         if self.invulnerable > 0 or not self.alive or self.dying:
             return False
+        # Never carry wall slowdown / lightning into the next life
+        self.clear_wall_status()
             
         if not self.infinite_lives:
-            self.lives -= 1
+            if not self.use_shared_lives:
+                self.lives -= 1
+            self.just_lost_life = True
         self.invulnerable = PLAYER_INVULN_TIME
         # Any life loss clears Phenix gauge / combo (novice keeps floor)
         self.phenix_gauge = float(self.phenix_min_gauge)
@@ -459,19 +568,24 @@ class Player:
             self.dying = True
             self.death_timer = 0.0
             self.invulnerable = 0.0
+            self.rumble(1.0, 1.0, 640)
             return True
-        
+        self.rumble(0.85, 1.0, 360)
         return False
+
+    def clear_wall_status(self):
+        """Drop leftover edge lightning / slowdown so it cannot leak to next life or hot-seat swap."""
+        self.slowdown_timer = 0.0
+        self.edge_timer = 0.0
+        self.edge_flash = 0.0
+        self.edge_contact = False
+        self.edge_death = False
+        self.edge_side = 0
 
     def _get_white_image(self):
         if self._white_image is None:
-            w, h = self.image.get_size()
-            white = pygame.Surface((w, h), pygame.SRCALPHA)
-            for y in range(h):
-                for x in range(w):
-                    r, g, b, a = self.image.get_at((x, y))
-                    if a > 20:
-                        white.set_at((x, y), (255, 255, 255, a))
+            white = self.image.copy()
+            white.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGB_MAX)
             self._white_image = white
         return self._white_image
 
@@ -485,7 +599,7 @@ class Player:
             intensity = max(intensity, 0.85) * 1.55
         
         flicker = 0.85 + 0.15 * math.sin(self.engine_time * 28.0 + cx * 0.1)
-        length = intensity * flicker * random.uniform(14, 22)
+        length = intensity * flicker * (18.0 + 4.0 * math.sin(self.engine_time * 19.0 + cx))
         width = 5 + intensity * 3
         if phenix:
             length *= 1.35
@@ -495,14 +609,23 @@ class Player:
             h = length * (0.5 + 0.5 * (i / 3.0))
             w = width * (1.4 - 0.2 * i)
             if phenix:
-                # Outer dark red → orange → bright core
-                color = (
-                    (160, 20, 5),
-                    (220, 50, 10),
-                    (255, 110, 25),
-                )[min(2, 3 - i)]
+                if getattr(self, "palette", "red") == "blue":
+                    color = (
+                        (80, 180, 255),
+                        (140, 220, 255),
+                        (200, 245, 255),
+                    )[min(2, 3 - i)]
+                else:
+                    color = (
+                        (160, 20, 5),
+                        (220, 50, 10),
+                        (255, 110, 25),
+                    )[min(2, 3 - i)]
             else:
-                color = (40, 160 + i * 30, 255)
+                if getattr(self, "palette", "red") == "blue":
+                    color = (20, 60 + i * 20, 200)
+                else:
+                    color = (40, 160 + i * 30, 255)
             points = [
                 (cx - w, cy),
                 (cx + w, cy),
@@ -514,13 +637,22 @@ class Player:
         core_h = length * 0.7
         core_w = width * 0.45
         if phenix:
-            pygame.draw.polygon(surface, (255, 200, 60), [
-                (cx - core_w, cy),
-                (cx + core_w, cy),
-                (cx + core_w * 0.2, cy + core_h),
-                (cx - core_w * 0.2, cy + core_h),
-            ])
-            pygame.draw.circle(surface, (255, 245, 180), (int(cx), int(cy + core_h * 0.85)), 3)
+            if getattr(self, "palette", "red") == "blue":
+                pygame.draw.polygon(surface, (210, 245, 255), [
+                    (cx - core_w, cy),
+                    (cx + core_w, cy),
+                    (cx + core_w * 0.2, cy + core_h),
+                    (cx - core_w * 0.2, cy + core_h),
+                ])
+                pygame.draw.circle(surface, (255, 255, 255), (int(cx), int(cy + core_h * 0.85)), 3)
+            else:
+                pygame.draw.polygon(surface, (255, 200, 60), [
+                    (cx - core_w, cy),
+                    (cx + core_w, cy),
+                    (cx + core_w * 0.2, cy + core_h),
+                    (cx - core_w * 0.2, cy + core_h),
+                ])
+                pygame.draw.circle(surface, (255, 245, 180), (int(cx), int(cy + core_h * 0.85)), 3)
         else:
             pygame.draw.polygon(surface, (180, 255, 255), [
                 (cx - core_w, cy),
@@ -531,10 +663,13 @@ class Player:
             pygame.draw.circle(surface, (220, 255, 255), (int(cx), int(cy + core_h * 0.85)), 2)
 
     def _draw_edge_lightning(self, surface):
-        if self.edge_flash < 0.05 or self.dying:
+        if self.edge_flash < 0.05 and not (self.dying and self.edge_death):
+            return
+        if self.dying and not self.edge_death:
             return
         
-        intensity = self.edge_flash
+        intensity = max(self.edge_flash, 0.85 if (self.dying and self.edge_death) else 0.0)
+        side = self.edge_side or self.last_edge_side
         cx, cy = self.x, self.y
         num_arcs = 3 + int(intensity * 5)
         
@@ -566,13 +701,13 @@ class Player:
             r = int(22 + intensity * 18 + random.uniform(-4, 4))
             pygame.draw.circle(surface, (120, 190, 255), (int(cx), int(cy)), r, 1)
         
-        if self.edge_side != 0:
-            wall_x = 8 if self.edge_side < 0 else BASE_WIDTH - 8
+        if side != 0:
+            wall_x = 8 if side < 0 else BASE_WIDTH - 8
             for _ in range(2):
                 y_off = random.uniform(-25, 25)
                 points = [
-                    (cx + self.edge_side * 15, cy + y_off * 0.3),
-                    (cx + self.edge_side * 25 + random.uniform(-5, 5), cy + y_off * 0.6),
+                    (cx + side * 15, cy + y_off * 0.3),
+                    (cx + side * 25 + random.uniform(-5, 5), cy + y_off * 0.6),
                     (wall_x, cy + y_off + random.uniform(-8, 8)),
                 ]
                 pygame.draw.lines(surface, (150, 210, 255), False, points, 1)
@@ -600,6 +735,8 @@ class Player:
                 off = getattr(self, "engine_offset", 8)
                 self._draw_engine_flame(surface, self.x - off, ship_bottom, 0.6 * (1.0 - t))
                 self._draw_engine_flame(surface, self.x + off, ship_bottom, 0.6 * (1.0 - t))
+            if self.edge_death:
+                self._draw_edge_lightning(surface)
             return
         
         # Blink when invulnerable
@@ -651,8 +788,13 @@ class Player:
                 pygame.draw.rect(surface, (255, 240, 160), (bx - 1, by, 2, 10))
                 pygame.draw.circle(surface, (255, 220, 120), (bx, by), 3)
             else:
-                pygame.draw.rect(surface, (140, 255, 255), (bx - 3, by, 6, 16))
-                pygame.draw.rect(surface, (255, 255, 255), (bx - 1, by, 2, 16))
+                if getattr(self, "palette", "red") == "blue":
+                    # P2: cyan shifted toward violet
+                    pygame.draw.rect(surface, (170, 120, 255), (bx - 3, by, 6, 16))
+                    pygame.draw.rect(surface, (230, 210, 255), (bx - 1, by, 2, 16))
+                else:
+                    pygame.draw.rect(surface, (140, 255, 255), (bx - 3, by, 6, 16))
+                    pygame.draw.rect(surface, (255, 255, 255), (bx - 1, by, 2, 16))
 
     def get_bullet_rects(self):
         """List of (index, rect) for active shots."""

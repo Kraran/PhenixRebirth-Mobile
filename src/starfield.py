@@ -7,6 +7,7 @@ Hubble-inspired assets. Usually one planet or one nebula; rarely both may share 
 import pygame
 import random
 import os
+import math
 from settings import *
 
 from settings import asset_path
@@ -271,13 +272,10 @@ class Nebula:
             self.alive = False
 
     def draw(self, surface):
-        # Subtle alpha pulse
-        img = self.image
-        alpha = int(200 + 40 * abs(__import__("math").sin(self._anim * 0.4)))
-        if alpha < 255:
-            img = self.image.copy()
-            img.set_alpha(alpha)
-        surface.blit(img, (int(self.x - self.w // 2), int(self.y - self.h // 2)))
+        # Pulse alpha on the instance surface — no per-frame copy
+        alpha = int(200 + 40 * abs(math.sin(self._anim * 0.4)))
+        self.image.set_alpha(alpha)
+        surface.blit(self.image, (int(self.x - self.w // 2), int(self.y - self.h // 2)))
 
 
 class Starfield:

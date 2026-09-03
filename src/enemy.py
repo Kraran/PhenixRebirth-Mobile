@@ -30,18 +30,9 @@ class EnemyBullet:
     def draw(self, surface):
         if not self.alive:
             return
-        if self.stage >= 4:
-            pygame.draw.rect(surface, (160, 220, 40), (int(self.x) - 3, int(self.y), 7, 14))
-            pygame.draw.rect(surface, (220, 255, 100), (int(self.x) - 1, int(self.y), 3, 14))
-        elif self.stage >= 3:
-            pygame.draw.rect(surface, (220, 30, 50), (int(self.x) - 3, int(self.y), 7, 14))
-            pygame.draw.rect(surface, (255, 120, 80), (int(self.x) - 1, int(self.y), 3, 14))
-        elif self.stage >= 2:
-            pygame.draw.rect(surface, (80, 160, 255), (int(self.x) - 3, int(self.y), 6, 12))
-            pygame.draw.rect(surface, (180, 220, 255), (int(self.x) - 1, int(self.y), 2, 12))
-        else:
-            pygame.draw.rect(surface, (255, 80, 200), (int(self.x) - 3, int(self.y), 6, 12))
-            pygame.draw.rect(surface, (255, 180, 255), (int(self.x) - 1, int(self.y), 2, 12))
+        # Same pink as stage-1 birds, all stages / boss fodder
+        pygame.draw.rect(surface, (255, 80, 200), (int(self.x) - 3, int(self.y), 6, 12))
+        pygame.draw.rect(surface, (255, 180, 255), (int(self.x) - 1, int(self.y), 2, 12))
 
     def get_hitbox(self):
         return pygame.Rect(int(self.x) - 3, int(self.y), 6, 12)
@@ -200,9 +191,11 @@ class Enemy:
             sm = getattr(self, 'speed_mult', 1.0)
             self.y += ENEMY_DIVE_SPEED * sm * dt
             
-            dx = self.dive_target_x - self.x
-            self.x += dx * 1.6 * dt
-            self.x += math.sin(self.time * 5.5) * 28 * dt
+            # Soft steer toward this bird's own lane — not a shared player X
+            lane = getattr(self, "dive_lane", self.dive_target_x)
+            dx = lane - self.x
+            self.x += dx * 0.55 * dt
+            self.x += math.sin(self.time * 5.5 + self.formation_index) * 36 * dt
             self.x = max(20, min(BASE_WIDTH - 20, self.x))
             
             if self.y > BASE_HEIGHT + 50:
@@ -211,7 +204,10 @@ class Enemy:
                     self.y = -40
                 else:
                     self.y = -40
-                    self.dive_target_x = player_x
+                    # Keep a personal lane; slight wander, do not stack on player
+                    jitter = random.uniform(-70, 70)
+                    self.dive_lane = max(28, min(BASE_WIDTH - 28, lane + jitter))
+                    self.dive_target_x = self.dive_lane
         
         elif self.state == "returning":
             target_x = self.start_x + formation_offset_x
@@ -240,7 +236,10 @@ class Enemy:
         if self.state != "formation" or not self.alive or self.dying:
             return
         self.state = "diving"
-        self.dive_target_x = player_x
+        slot = (self.formation_index % 7) - 3
+        jitter = slot * 38 + random.uniform(-28, 28)
+        self.dive_lane = max(28, min(BASE_WIDTH - 28, player_x + jitter))
+        self.dive_target_x = self.dive_lane
 
     def kill(self):
         """Start disappearance animation (idempotent)."""
@@ -421,12 +420,17 @@ class EnemyFormation:
             bullet.update(dt)
             if not bullet.alive:
                 self.bullets.remove(bullet)
+        # Drop finished corpses so later stages don't scan ghosts
+        if any((not e.alive and not e.dying) for e in self.enemies):
+            self.enemies = [e for e in self.enemies if e.alive or e.dying]
 
     def draw(self, surface):
         for enemy in self.enemies:
-            enemy.draw(surface)
+            if enemy.alive or enemy.dying:
+                enemy.draw(surface)
         for bullet in self.bullets:
-            bullet.draw(surface)
+            if bullet.alive:
+                bullet.draw(surface)
 
     def get_alive_enemies(self):
         return [e for e in self.enemies if e.alive]
@@ -435,7 +439,7 @@ class EnemyFormation:
         return [e for e in self.enemies if e.alive and not e.dying]
 
     def all_dead(self):
-        return len(self.get_alive_enemies()) == 0
+        return not any(e.alive for e in self.enemies)
 
 
 
@@ -654,8 +658,10 @@ class BigBird:
         if self.state == "diving":
             sm = getattr(self, 'speed_mult', 1.0)
             self.y += ENEMY_DIVE_SPEED * 0.95 * sm * dt
-            dx = self.dive_target_x - self.x
-            self.x += dx * 1.4 * sm * dt
+            lane = getattr(self, "dive_lane", self.dive_target_x)
+            dx = lane - self.x
+            self.x += dx * 0.5 * sm * dt
+            self.x += math.sin(self.time * 4.0 + self.formation_index) * 30 * dt
             self.x = max(50, min(BASE_WIDTH - 50, self.x))
             # Sortie bas → réapparition fluide en haut (comme stage 1/2)
             if self.y > BASE_HEIGHT + 50:
@@ -699,7 +705,10 @@ class BigBird:
         if not (self.wing_left and self.wing_right):
             return
         self.state = "diving"
-        self.dive_target_x = player_x
+        slot = (self.formation_index % 7) - 3
+        jitter = slot * 42 + random.uniform(-30, 30)
+        self.dive_lane = max(50, min(BASE_WIDTH - 50, player_x + jitter))
+        self.dive_target_x = self.dive_lane
 
     def kill(self):
         if not self.alive or self.dying:

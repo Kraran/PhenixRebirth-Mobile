@@ -2,7 +2,8 @@
 Internationalization (i18n) for UI strings.
 
 Supported languages: fr, en, es, de, it, pt, nl, pl, tr, sv, no, da, ru.
-Use set_lang(code), then t("key") / t_help(...) / get_credits_lines().
+Use set_lang(code), then t("key") / t_help(...) / t_list(...) / get_credits_lines().
+UI, help (2 pages including Phenix) and credits are fully localized.
 Language choice is persisted in settings.json.
 """
 LANGS = [
@@ -30,6 +31,49 @@ T = {
         "fr": "JOUER", "en": "PLAY", "es": "JUGAR", "de": "SPIELEN", "it": "GIOCA",
         "pt": "JOGAR", "nl": "SPELEN", "pl": "GRAJ", "tr": "OYNA", "sv": "SPELA",
         "no": "SPILL", "da": "SPIL", "ru": "ИГРАТЬ",
+    },
+    "play_2p": {
+        "fr": "2 JOUEURS", "en": "2 PLAYERS", "es": "2 JUGADORES", "de": "2 SPIELER",
+        "it": "2 GIOCATORI", "pt": "2 JOGADORES", "nl": "2 SPELERS", "pl": "2 GRACZY",
+        "tr": "2 OYUNCU", "sv": "2 SPELARE", "no": "2 SPILLERE", "da": "2 SPILLERE",
+        "ru": "2 ИГРОКА",
+    },
+    "mode": {
+        "fr": "MODE", "en": "MODE", "es": "MODO", "de": "MODUS", "it": "MODO",
+        "pt": "MODO", "nl": "MODUS", "pl": "TRYB", "tr": "MOD", "sv": "LAGE",
+        "no": "MODUS", "da": "TILSTAND", "ru": "РЕЖИМ",
+    },
+    "mode_solo": {
+        "fr": "1 joueur", "en": "1 player", "es": "1 jugador", "de": "1 Spieler",
+        "it": "1 giocatore", "pt": "1 jogador", "nl": "1 speler", "pl": "1 gracz",
+        "tr": "1 oyuncu", "sv": "1 spelare", "no": "1 spiller", "da": "1 spiller",
+        "ru": "1 игрок",
+    },
+    "mode_hotseat": {
+        "fr": "2 joueurs Hot Seat", "en": "2P Hot Seat", "es": "2P Hot Seat",
+        "de": "2S Hot Seat", "it": "2G Hot Seat", "pt": "2J Hot Seat",
+        "nl": "2S Hot Seat", "pl": "2G Hot Seat", "tr": "2O Hot Seat",
+        "sv": "2S Hot Seat", "no": "2S Hot Seat", "da": "2S Hot Seat",
+        "ru": "2И Hot Seat",
+    },
+    "mode_coop": {
+        "fr": "2 joueurs Coop", "en": "2P Co-op", "es": "2P Coop", "de": "2S Coop",
+        "it": "2G Coop", "pt": "2J Coop", "nl": "2S Coop", "pl": "2G Coop",
+        "tr": "2O Coop", "sv": "2S Coop", "no": "2S Coop", "da": "2S Coop",
+        "ru": "2И Кооп",
+    },
+    "player_n": {
+        "fr": "JOUEUR {n}", "en": "PLAYER {n}", "es": "JUGADOR {n}", "de": "SPIELER {n}",
+        "it": "GIOCATORE {n}", "pt": "JOGADOR {n}", "nl": "SPELER {n}", "pl": "GRACZ {n}",
+        "tr": "OYUNCU {n}", "sv": "SPELARE {n}", "no": "SPILLER {n}", "da": "SPILLER {n}",
+        "ru": "ИГРОК {n}",
+    },
+    "hotseat_press": {
+        "fr": "Appuyez sur une touche", "en": "Press any button",
+        "es": "Pulsa una tecla", "de": "Taste drucken", "it": "Premi un tasto",
+        "pt": "Prima uma tecla", "nl": "Druk op een toets", "pl": "Nacisnij klawisz",
+        "tr": "Bir tusa basin", "sv": "Tryck pa en tangent", "no": "Trykk en tast",
+        "da": "Tryk pa en tast", "ru": "Нажмите любую клавишу",
     },
     "difficulty": {
         "fr": "DIFFICULTE", "en": "DIFFICULTY", "es": "DIFICULTAD", "de": "SCHWIERIGKEIT",
@@ -145,6 +189,12 @@ T = {
         "pt": "Controlo", "nl": "Besturing", "pl": "Sterowanie", "tr": "Kontrol", "sv": "Kontroller",
         "no": "Kontroller", "da": "Styring", "ru": "Управление",
     },
+    "opt_autofire": {
+        "fr": "Tir automatique", "en": "Auto fire", "es": "Disparo auto", "de": "Autofeuer",
+        "it": "Fuoco auto", "pt": "Tiro auto", "nl": "Autovuur", "pl": "Autoogien",
+        "tr": "Otomatik ates", "sv": "Auteld", "no": "Autoild", "da": "Autoild",
+        "ru": "Автоогонь",
+    },
     "opt_sfx": {
         "fr": "Volume SFX", "en": "SFX Volume", "es": "Volumen SFX", "de": "SFX-Lautstarke",
         "it": "Volume SFX", "pt": "Volume SFX", "nl": "SFX-volume", "pl": "Glosnosc SFX",
@@ -156,6 +206,12 @@ T = {
         "it": "Volume Musica", "pt": "Volume Musica", "nl": "Muziekvolume", "pl": "Glosnosc muzyki",
         "tr": "Muzik Sesi", "sv": "Musikvolym", "no": "Musikkvolum", "da": "Musiklydstyrke",
         "ru": "Громкость музыки",
+    },
+    "opt_rumble": {
+        "fr": "Vibrations", "en": "Rumble", "es": "Vibracion", "de": "Vibration",
+        "it": "Vibrazione", "pt": "Vibracao", "nl": "Trilling", "pl": "Wibracje",
+        "tr": "Titresim", "sv": "Vibration", "no": "Vibrasjon", "da": "Vibration",
+        "ru": "Вибрация",
     },
     "opt_display": {
         "fr": "Affichage", "en": "Display", "es": "Pantalla", "de": "Anzeige", "it": "Schermo",
@@ -456,6 +512,25 @@ T = {
         "it": "Cheat attivo", "pt": "Cheat ativo", "nl": "Cheat actief", "pl": "Cheat aktywny",
         "tr": "Hile aktif", "sv": "Fusk aktivt", "no": "Juks aktiv", "da": "Snyd aktiv",
         "ru": "Чит активен",
+    },
+    "cheat_live": {
+        "fr": "VIES INFINIES", "en": "INFINITE LIVES", "es": "VIDAS INFINITAS",
+        "de": "UNENDLICHE LEBEN", "it": "VITE INFINITE", "pt": "VIDAS INFINITAS",
+        "nl": "ONEINDIGE LEVENS", "pl": "NIESKONCZONE ZYCIA", "tr": "SINIRSIZ CAN",
+        "sv": "OANDLIGA LIV", "no": "UENDELIGE LIV", "da": "UENDELIGE LIV",
+        "ru": "БЕСКОНЕЧНЫЕ ЖИЗНИ",
+    },
+    "cheat_phen": {
+        "fr": "PHENIX MAX", "en": "PHENIX MAX", "es": "PHENIX MAX", "de": "PHENIX MAX",
+        "it": "PHENIX MAX", "pt": "PHENIX MAX", "nl": "PHENIX MAX", "pl": "PHENIX MAX",
+        "tr": "PHENIX MAX", "sv": "PHENIX MAX", "no": "PHENIX MAX", "da": "PHENIX MAX",
+        "ru": "PHENIX MAX",
+    },
+    "cheat_stage": {
+        "fr": "STAGE {n}", "en": "STAGE {n}", "es": "FASE {n}", "de": "STAGE {n}",
+        "it": "LIVELLO {n}", "pt": "FASE {n}", "nl": "STAGE {n}", "pl": "ETAP {n}",
+        "tr": "BOLUM {n}", "sv": "BANA {n}", "no": "BANE {n}", "da": "BANE {n}",
+        "ru": "УРОВЕНЬ {n}",
     },
 
 }
@@ -777,6 +852,87 @@ HELP = {
             "Doppelschuss aus Flammen. Die Anzeige sinkt als Timer.",
             "Erneut B / Shift: abbrechen und Anzeige behalten.",
             "Kurze Pause vor erneuter Aktivierung.",
+        ],
+        "it": [
+            "Ogni colpo al corpo: +1 alla barra.",
+            "Ogni colpo mancato: -1 (ali / mattoni = neutro).",
+            "Da 3: Shift / X o pulsante B attiva la forma.",
+            "Diventi un uccello di fuoco: invulnerabile, piu veloce,",
+            "doppio tiro di fiamme. La barra scende come timer.",
+            "B / Shift di nuovo per interrompere e tenere la barra.",
+            "Breve attesa prima di poter riattivare.",
+        ],
+        "pt": [
+            "Cada acerto no corpo: +1 na barra.",
+            "Cada erro: -1 (asas / tijolos = neutro).",
+            "A partir de 3: Shift / X ou botao B ativa o modo.",
+            "Tornas-te uma ave de fogo: invulneravel, mais rapido,",
+            "tiro duplo de chamas. A barra desce como temporizador.",
+            "B / Shift de novo para cortar e guardar a barra.",
+            "Pequena pausa antes de reativar.",
+        ],
+        "nl": [
+            "Elke rake hit op het lichaam: +1 op de meter.",
+            "Elke misser: -1 (vleugels / stenen = neutraal).",
+            "Vanaf 3: Shift / X of knop B activeert de vorm.",
+            "Je wordt een vuurbird: onkwetsbaar, sneller,",
+            "dubbel vlamschot. De meter daalt als timer.",
+            "B / Shift opnieuw om te stoppen en de meter te houden.",
+            "Korte pauze voor een nieuwe activatie.",
+        ],
+        "pl": [
+            "Trafienie w cialo: +1 do paska.",
+            "Pudlo: -1 (skrzydla / cegly = neutralne).",
+            "Od 3: Shift / X lub przycisk B wlacza tryb.",
+            "Stajesz sie ptakiem ognia: niesmiertelny, szybszy,",
+            "podwojny ogien. Pasek spada jak timer.",
+            "B / Shift ponownie przerywa i zachowuje pasek.",
+            "Krotka przerwa przed kolejna aktywacja.",
+        ],
+        "tr": [
+            "Govde isabeti: gostergeye +1.",
+            "Iska: -1 (kanat / tugla notr).",
+            "3'ten itibaren: Shift / X veya B tusunu kullan.",
+            "Ates kusu olursun: yenilmez, daha hizli,",
+            "cift alev atisi. Gosterge sure gibi iner.",
+            "B / Shift tekrar: kes ve gostergeyi sakla.",
+            "Yeniden acmadan once kisa bekleme.",
+        ],
+        "sv": [
+            "Traff pa kroppen: +1 pa mataren.",
+            "Miss: -1 (vingar / tegel = neutralt).",
+            "Fran 3: Shift / X eller knapp B aktiverar lagen.",
+            "Du blir en eldfagel: osarbar, snabbare,",
+            "dubbla flamskott. Mataren sjunker som timer.",
+            "B / Shift igen avbryter och behaller mataren.",
+            "Kort vanta innan ny aktivering.",
+        ],
+        "no": [
+            "Treff pa kroppen: +1 pa maleren.",
+            "Bom: -1 (vinger / murstein = noytralt).",
+            "Fra 3: Shift / X eller knapp B aktiverer formen.",
+            "Du blir en ildfugl: usarbar, raskere,",
+            "dobbelt flammeskudd. Maleren synker som timer.",
+            "B / Shift igjen avbryter og beholder maleren.",
+            "Kort pause for ny aktivering.",
+        ],
+        "da": [
+            "Traef pa kroppen: +1 pa maleren.",
+            "Misser: -1 (vinger / mursten = neutralt).",
+            "Fra 3: Shift / X eller knap B aktiverer formen.",
+            "Du bliver en ildfugl: usarbar, hurtigere,",
+            "dobbelt flammerskud. Maleren falder som timer.",
+            "B / Shift igen afbryder og beholder maleren.",
+            "Kort pause for ny aktivering.",
+        ],
+        "ru": [
+            "Попадание в тело: +1 к шкале.",
+            "Промах: -1 (крылья / блоки нейтральны).",
+            "С 3: Shift / X или кнопка B включает форму.",
+            "Ты становишься огненной птицей: неуязвим, быстрее,",
+            "двойной огненный выстрел. Шкала падает как таймер.",
+            "B / Shift снова — выключить и сохранить шкалу.",
+            "Короткая пауза перед повторным включением.",
         ],
     },
     "help_page": {

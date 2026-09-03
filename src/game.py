@@ -4,6 +4,10 @@ Phenix Rebirth — main game controller.
 Owns the window, fixed-timestep loop, menus, combat, stage progression,
 pause/options, high scores, attract-mode help, and credits.
 
+Play modes: solo, hot-seat (alternating), coop (simultaneous). Options cover
+controls, autofire, volumes, rumble, display, bezels, FPS counter, CRT
+scanlines and language. Cheats on the high-score menu: LVL2–LVL5, LIVE, PHEN.
+
 Architecture notes:
 - Logical resolution BASE_WIDTH x BASE_HEIGHT (see settings.py); scaled to display.
 - State flags: started, game_over, paused, stage_transition, menu_screen, hs_phase.
@@ -24,7 +28,7 @@ from settings import stage_content, stage_speed_mult
 from player import Player
 from enemy import EnemyFormation, BigBird, Enemy
 from boss import BossSaucer
-from explosion import Explosion
+from explosion import Explosion, TeslaCoilFx
 from starfield import Starfield
 from sounds import SoundManager
 from i18n import set_lang, get_lang, t, t_help, t_list, get_credits_lines, LANGS, LANG_CODES
@@ -39,6 +43,8 @@ def load_user_settings():
         "display_mode": "fullscreen",
         "sfx_volume": 0.8,
         "music_volume": 0.4,
+        "rumble_level": 3,  # 0=off … 3=normal … 5=max
+        "autofire": True,  # hold fire key to shoot again when the shot leaves
         "language": "fr",
         "show_fps": False,
         "scanlines": 0,  # 0=off, 1/2/3 intensity
@@ -71,6 +77,8 @@ class TextCache:
         key = (id(font), text, color)
         surf = self._data.get(key)
         if surf is None:
+            if len(self._data) > 400:
+                self._data.clear()
             surf = font.render(str(text), True, color)
             self._data[key] = surf
         return surf
@@ -134,6 +142,7 @@ class Game:
         self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
         self.formation = EnemyFormation()
         self.explosions = []
+        self.tesla_fx = None
         self.starfield = Starfield()
         
         self.running = True
@@ -161,6 +170,7 @@ class Game:
         self.cheat_buffer = ""
         self.cheat_msg_timer = 0.0
         self.cheat_msg = ""
+        self.cheat_kind = ""
         self.used_cheat = False
         self.phenix_cheat = False
         self.paused = False
@@ -178,6 +188,23 @@ class Game:
         self.help_first_shown = False  # first attract uses longer delay
         self.attract_mode = False
         self.attract_timer = 0.0
+        # Hot-seat 2P: each player has a fully independent run (stage/score/lives/world)
+        self.hotseat = False
+        self.play_mode = getattr(self, "play_mode", "solo")  # solo | hotseat | coop
+        self.PLAY_MODES = ["solo", "hotseat", "coop"]
+        self.player2 = None
+        self.joysticks = []
+        self.lives_shared = 5
+        self.current_p = 0
+        self.slots = [None, None]
+        self.hotseat_wait = False
+        self.hotseat_next = 0
+        self.hotseat_hold = 0.0
+        self.hotseat_pending = None  # None | "switch" | "eliminated" | "gameover"
+        self.HOTSEAT_HOLD_LIFE = 1.25   # mid-life explosion
+        self.HOTSEAT_HOLD_FINAL = 1.95  # last life / game over (covers Tesla climb)
+        self.hs_queue = []
+        self.hs_slot_label = 1
         self.next_is_attract = True  # after first help, alternate attract/help
         self.ai_move_smooth = 0.0
         self.ai_dir_locked = 0
@@ -265,6 +292,14 @@ class Game:
             self.sfx_volume = float(user.get("sfx_volume", 0.8))
         if not hasattr(self, "music_volume"):
             self.music_volume = float(user.get("music_volume", 0.4))
+        if not hasattr(self, "rumble_level"):
+            try:
+                self.rumble_level = int(user.get("rumble_level", 3))
+            except Exception:
+                self.rumble_level = 3
+            self.rumble_level = max(0, min(5, self.rumble_level))
+        if not hasattr(self, "autofire"):
+            self.autofire = bool(user.get("autofire", True))
         if not hasattr(self, "language"):
             self.language = user.get("language", "fr")
             if self.language not in LANG_CODES:
@@ -344,20 +379,23 @@ class Game:
     # --- Difficulty & scoring helpers ---
 
 
-    def _activate_phenix_from_input(self):
+    def _activate_phenix_from_input(self, ship=None):
         """Toggle Phenix: activate if ready, or cancel early (keep remaining gauge)."""
         if not self.started or self.paused or self.game_over or self.attract_mode:
             return
         if self.stage_transition is not None:
             return
-        if not self.player:
-            return
-        if self.player.is_phenix:
-            if self.player.cancel_phenix():
-                self.shake_amount = max(self.shake_amount, 3.0)
-            return
-        if self.player.try_activate_phenix():
-            self.shake_amount = max(self.shake_amount, 4.0)
+        ships = [ship] if ship is not None else self._ships()
+        for s in ships:
+            if not s or not s.alive:
+                continue
+            if s.is_phenix:
+                if s.cancel_phenix():
+                    self.shake_amount = max(self.shake_amount, 3.0)
+                return
+            if s.try_activate_phenix():
+                self.shake_amount = max(self.shake_amount, 4.0)
+                return
 
 
     def _draw_cheat_message(self):
@@ -366,15 +404,16 @@ class Game:
             return
         pulse = 0.55 + 0.45 * abs(math.sin(self.cheat_msg_timer * 5.0))
         msg = self.cheat_msg
-        # Color by type
-        if msg.startswith("1UP") or "1UP" in msg.upper():
+        # Color by type (kind is language-agnostic)
+        kind = getattr(self, "cheat_kind", "")
+        if kind == "1up" or "1UP" in msg.upper():
             blink = int(self.cheat_msg_timer * 5) % 2 == 0
             col = (255, 255, 180) if blink else (255, 200, 60)
-        elif "PHENIX" in msg.upper() or "PHEN" in msg.upper():
+        elif kind == "phen" or "PHENIX" in msg.upper():
             col = (255, int(140 + 80 * pulse), 40)
-        elif "LIVE" in msg.upper() or "INFINITE" in msg.upper():
+        elif kind == "live":
             col = (120, 255, 160)
-        elif msg.startswith("STAGE"):
+        elif kind == "stage":
             col = (180, 200, 255)
         else:
             col = (255, 220, 100)
@@ -394,24 +433,44 @@ class Game:
             self.game_surface.blit(g, (cx - cm.get_width() // 2 + ox, cy - cm.get_height() // 2 + oy))
         self.game_surface.blit(cm, (cx - cm.get_width() // 2, cy - cm.get_height() // 2))
 
-    def _draw_phenix_gauge(self):
-        """HUD: 10-segment Phenix gauge (left side) + fire around label from level 3."""
-        if not hasattr(self, "player") or self.player is None:
+    def _add_score(self, ship, pts):
+        pts = int(pts)
+        if ship is not None:
+            ship.score = getattr(ship, "score", 0) + pts
+        if getattr(self, "play_mode", "solo") == "coop":
+            self.score = sum(getattr(s, "score", 0) for s in self._ships())
+        else:
+            self.score += pts
+
+    def _draw_phenix_gauge(self, ship=None, gx=18, gy=100, align="left"):
+        """HUD: 10-segment Phenix gauge + fire around label from level 3."""
+        if ship is None:
+            ship = getattr(self, "player", None)
+        if ship is None:
             return
-        gauge = float(getattr(self.player, "phenix_gauge", 0))
+        gauge = float(getattr(ship, "phenix_gauge", 0))
         level = int(gauge)  # for label threshold
-        gx, gy = 18, 100
+        blue = getattr(ship, "palette", "red") == "blue"
         seg_w, seg_h, gap = 14, 10, 3
         total_h = 10 * (seg_h + gap)
         pygame.draw.rect(self.game_surface, (20, 20, 35), (gx - 3, gy - 3, seg_w + 6, total_h + 3), border_radius=3)
-        active = getattr(self.player, "is_phenix", False)
+        active = getattr(ship, "is_phenix", False)
         for i in range(10):
             y = gy + (9 - i) * (seg_h + gap)
             # How much of this segment is filled (supports fractional drain)
             seg_fill = max(0.0, min(1.0, gauge - i))
             if seg_fill > 0:
                 t = (i + 1) / 10.0
-                if active:
+                if blue:
+                    if active:
+                        col = (int(40 + 20 * t), int(140 + 80 * t), 255)
+                    else:
+                        col = (
+                            int(40 * (1.0 - t)),
+                            int(80 + 100 * t),
+                            int(255 * min(1.0, 0.5 + t * 0.5)),
+                        )
+                elif active:
                     col = (255, int(140 + 80 * t), int(30 + 20 * t))
                 else:
                     col = (
@@ -428,30 +487,35 @@ class Game:
             else:
                 pygame.draw.rect(self.game_surface, (40, 40, 55), (gx, y, seg_w, seg_h), border_radius=2)
 
-        lab_x = gx - 2
         lab_y = gy + total_h + 6
         tc = self.text_cache
+        right = align == "right" or gx > BASE_WIDTH // 2
         if level >= 3:
-            # Quantize pulse so text surfaces stay cached (looks the same)
             ticks = pygame.time.get_ticks() * 0.001
             pulse = 0.75 + 0.25 * abs(math.sin(ticks * 4.0))
             power = (level - 3) / 7.0
-            # 8 color steps instead of continuous unique RGB each frame
-            g_q = int((140 + 80 * power * pulse) // 8) * 8
-            b_q = int((40 + 40 * power) // 8) * 8
-            lab = tc.get(self.font, "PHENIX", (255, g_q, b_q))
-            glow_g = int((100 + 60 * power) // 8) * 8
-            glow = tc.get(self.font, "PHENIX", (255, glow_g, 20))
+            if blue:
+                g_q = int((180 + 50 * power * pulse) // 8) * 8
+                lab = tc.get(self.font, "PHENIX", (140, g_q, 255))
+                glow = tc.get(self.font, "PHENIX", (80, 180, 255))
+            else:
+                g_q = int((140 + 80 * power * pulse) // 8) * 8
+                b_q = int((40 + 40 * power) // 8) * 8
+                lab = tc.get(self.font, "PHENIX", (255, g_q, b_q))
+                glow_g = int((100 + 60 * power) // 8) * 8
+                glow = tc.get(self.font, "PHENIX", (255, glow_g, 20))
+            lab_x = (gx + seg_w - lab.get_width()) if right else (gx - 2)
             alpha = int(50 + 40 * power * pulse)
             glow.set_alpha(alpha)
             for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 self.game_surface.blit(glow, (lab_x + ox, lab_y + oy))
             self.game_surface.blit(lab, (lab_x, lab_y))
         else:
-            lab = tc.get(self.font, "PHENIX", (120, 110, 100))
+            lab = tc.get(self.font, "PHENIX", (100, 140, 180) if blue else (120, 110, 100))
+            lab_x = (gx + seg_w - lab.get_width()) if right else (gx - 2)
             self.game_surface.blit(lab, (lab_x, lab_y))
 
-        num_col = (255, 220, 160) if level >= 3 or active else (140, 140, 150)
+        num_col = ((180, 230, 255) if blue else (255, 220, 160)) if level >= 3 or active else (140, 140, 150)
         num = tc.get(self.font, str(int(round(gauge))), num_col)
         self.game_surface.blit(num, (gx + seg_w // 2 - num.get_width() // 2, gy - 18))
 
@@ -469,7 +533,24 @@ class Game:
         s = f"{n:,}".replace(",", " ")
         return s
 
-    def _draw_hs_row(self, surface, y, rank, name, score, col, score_right_x=None):
+    def _coop_icon_surf(self):
+        """Lazy-load the two-player HUD pictogram."""
+        icon = getattr(self, "_coop_icon", None)
+        if icon is None:
+            path = asset_path("sprites", "icon_coop.png")
+            try:
+                icon = pygame.image.load(path).convert_alpha()
+            except Exception:
+                icon = pygame.Surface((22, 28), pygame.SRCALPHA)
+            self._coop_icon = icon
+        return icon
+
+    def _draw_coop_mark(self, surface, x, y, col=(170, 185, 210)):
+        """Two-player mark, vertically centered on the score row."""
+        icon = self._coop_icon_surf()
+        surface.blit(icon, (x, y))
+
+    def _draw_hs_row(self, surface, y, rank, name, score, col, score_right_x=None, coop=False):
         """Draw one high-score line: rank aligned on '.', score right-aligned."""
         if score_right_x is None:
             score_right_x = BASE_WIDTH // 2 + 160
@@ -493,6 +574,12 @@ class Game:
             sc_s = self.format_score(score)
         sc_surf = self.font.render(sc_s, True, col)
         surface.blit(sc_surf, (score_right_x - sc_surf.get_width(), y))
+        if coop:
+            icon = self._coop_icon_surf()
+            # Column just right of the score, vertically centered on the line
+            ix = score_right_x + 12
+            iy = y + (self.font.get_height() - icon.get_height()) // 2
+            self._draw_coop_mark(surface, ix, iy)
 
     def difficulty_speed_mult(self):
 
@@ -542,9 +629,263 @@ class Game:
         self.stage = 1
         self._setup_stage(1)
 
+    def _capture_slot(self):
+        """Snapshot the active run so another player can take over."""
+        return {
+            "player": self.player,
+            "formation": self.formation,
+            "boss_saucer": self.boss_saucer,
+            "score": self.score,
+            "stage": self.stage,
+            "bosses_defeated": self.bosses_defeated,
+            "life_thresholds": list(self.life_thresholds),
+            "boss_bird_timer": getattr(self, "boss_bird_timer", 0.0),
+            "eliminated": bool(getattr(self.player, "alive", True) is False),
+        }
+
+    def _apply_slot(self, slot):
+        """Restore a player's independent world."""
+        if not slot:
+            return
+        self.player = slot["player"]
+        self.formation = slot["formation"]
+        self.boss_saucer = slot["boss_saucer"]
+        self.score = slot["score"]
+        self.stage = slot["stage"]
+        self.bosses_defeated = slot["bosses_defeated"]
+        self.life_thresholds = list(slot["life_thresholds"])
+        self.boss_bird_timer = slot.get("boss_bird_timer", 1.2)
+        self.stage_transition = None
+        self.transition_timer = 0.0
+        self.explosions = []
+        self.shake_amount = 0.0
+        # Fresh ship placement; keep gauge / lives / phenix flags on the Player object
+        self.player.x = BASE_WIDTH // 2
+        self.player.y = BASE_HEIGHT - 95
+        self.player.destroy_bullet()
+        self.player.dying = False
+        if self.player.lives > 0 or getattr(self.player, "infinite_lives", False):
+            self.player.alive = True
+        self.player.invulnerable = 1.1
+        self.player.just_lost_life = False
+        self.player.clear_wall_status()
+        self.tesla_fx = None
+        self.sounds.play_electric(False)
+        if getattr(self.player, "is_phenix", False):
+            try:
+                self.player.end_phenix(grant_invuln=True, keep_gauge=True)
+            except Exception:
+                pass
+
+    def _save_current_slot(self):
+        if not self.hotseat:
+            return
+        cap = self._capture_slot()
+        if self.slots[self.current_p]:
+            cap["eliminated"] = self.slots[self.current_p].get("eliminated", False)
+        self.slots[self.current_p] = cap
+
+    def _init_hotseat_slots(self):
+        """Build two independent stage-1 runs (same difficulty / cheat flags)."""
+        self.slots = []
+        for i in range(2):
+            self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
+            self.player.sounds = self.sounds
+            self.player.pid = i + 1
+            if i == 1:
+                self.player.apply_blue_palette()
+            self.formation = EnemyFormation()
+            self.boss_saucer = None
+            self.score = 0
+            self.stage = 1
+            self.explosions = []
+            self.life_thresholds = [(1337, False), (8086, False)]
+            self._apply_difficulty_start()
+            slot = self._capture_slot()
+            slot["eliminated"] = False
+            self.slots.append(slot)
+
+    def _other_p(self):
+        return 1 - self.current_p
+
+    def _slot_still_playing(self, idx):
+        sl = self.slots[idx] if 0 <= idx < 2 else None
+        if not sl or sl.get("eliminated"):
+            return False
+        p = sl.get("player")
+        if p is None:
+            return False
+        return bool(getattr(p, "infinite_lives", False) or getattr(p, "lives", 0) > 0 or p.alive)
+
+    def _hotseat_begin_wait(self, next_idx):
+        """Interstitial: wait for any key before loading the other player's world."""
+        self._save_current_slot()
+        if self.player:
+            self.player.clear_wall_status()
+        outgoing = self.slots[self.current_p] if self.slots[self.current_p] else None
+        if outgoing and outgoing.get("player"):
+            outgoing["player"].clear_wall_status()
+        self.hotseat_wait = True
+        self.hotseat_next = next_idx
+        self.input_grace = 0.28
+        self.paused = False
+        self.tesla_fx = None
+        self.sounds.play_electric(False)
+
+    def _hotseat_resume(self):
+        if not self.hotseat_wait:
+            return
+        self.hotseat_wait = False
+        self.current_p = self.hotseat_next
+        self._apply_slot(self.slots[self.current_p])
+        self.input_grace = 0.35
+        self.game_over = False
+
+    def _hotseat_arm_hold(self, pending, duration):
+        """Wait so the ship explosion is visible before overlay / game over."""
+        if self.hotseat_hold > 0:
+            return
+        self.hotseat_hold = duration
+        self.hotseat_pending = pending
+        if self.player:
+            self.player.just_lost_life = False
+
+    def _hotseat_finish_hold(self):
+        pending = self.hotseat_pending
+        self.hotseat_pending = None
+        self.hotseat_hold = 0.0
+        if pending == "switch":
+            self._hotseat_try_switch()
+        elif pending == "eliminated":
+            self._hotseat_player_eliminated()
+        elif pending == "gameover":
+            self.game_over = True
+            self._begin_highscore_flow()
+
+    def _hotseat_try_switch(self):
+        """After a lost life (ship still has lives): other player takes their own run."""
+        other = self._other_p()
+        if self._slot_still_playing(other):
+            self._hotseat_begin_wait(other)
+        # else keep playing — opponent already eliminated
+
+    def _hotseat_player_eliminated(self):
+        """Current player has no lives left."""
+        self._save_current_slot()
+        if self.slots[self.current_p]:
+            self.slots[self.current_p]["eliminated"] = True
+        other = self._other_p()
+        if self._slot_still_playing(other):
+            self._hotseat_begin_wait(other)
+        else:
+            self.game_over = True
+            self._begin_highscore_flow()
+
+    def _ships(self):
+        """Active ships this frame (1 in solo/hotseat, 2 in coop)."""
+        out = []
+        if self.player:
+            out.append(self.player)
+        if getattr(self, "play_mode", "solo") == "coop" and getattr(self, "player2", None):
+            out.append(self.player2)
+        return out
+
+    def _living_ships(self):
+        return [p for p in self._ships() if p.alive and not p.dying]
+
+    def _coop_bindings(self):
+        """Assign kb/pad for coop: 2 pads, or kb+pad, or split keyboard."""
+        joys = []
+        try:
+            pygame.joystick.init()
+            for i in range(pygame.joystick.get_count()):
+                j = pygame.joystick.Joystick(i)
+                j.init()
+                joys.append(j)
+        except Exception:
+            joys = []
+        self.joysticks = joys
+        if len(joys) >= 2:
+            return ("pad", joys[0]), ("pad", joys[1])
+        if len(joys) == 1:
+            # P1 pad, P2 same keyboard layout as 1-player
+            return ("pad", joys[0]), ("solo", None)
+        return ("kb1", None), ("kb2", None)
+
+    def _start_coop(self):
+        self.play_mode = "coop"
+        self.hotseat = False
+        self.player2 = Player(BASE_WIDTH // 2 + 70, BASE_HEIGHT - 95)
+        self.player = Player(BASE_WIDTH // 2 - 70, BASE_HEIGHT - 95)
+        self.player.pid = 1
+        self.player2.pid = 2
+        self.player.sounds = self.sounds
+        self.player2.sounds = self.sounds
+        self.player2.apply_blue_palette()
+        self.player.use_shared_lives = True
+        self.player2.use_shared_lives = True
+        b1, b2 = self._coop_bindings()
+        self.player.input_scheme = b1[0]
+        self.player2.input_scheme = b2[0]
+        self.player._joy = b1[1]
+        self.player2._joy = b2[1]
+        if b1[0] == "pad":
+            self.joystick = b1[1]
+        elif b2[0] == "pad":
+            self.joystick = b2[1]
+        self.lives_shared = 5
+        self._apply_difficulty_start()
+        # Shared pool overrides per-difficulty lives
+        self.lives_shared = 5
+        self.player.lives = 5
+        self.player2.lives = 5
+        self.player.use_shared_lives = True
+        self.player2.use_shared_lives = True
+        self.player2.phenix_sec_per_point = self.player.phenix_sec_per_point
+        self.player2.phenix_min_gauge = self.player.phenix_min_gauge
+        self.player.score = 0
+        self.player2.score = 0
+        self.player.life_flags = [False, False]
+        self.player2.life_flags = [False, False]
+        self.player2.sounds = self.sounds
+        self.started = True
+        self.input_grace = 0.35
+
+    def _on_coop_life_lost(self, ship):
+        if getattr(self, "play_mode", "") != "coop":
+            return
+        self.lives_shared = max(0, self.lives_shared - 1)
+        for p in self._ships():
+            p.lives = self.lives_shared
+        if self.lives_shared <= 0 and not ship.dying:
+            ship.lives = 0
+            ship.dying = True
+            ship.death_timer = 0.0
+            ship.invulnerable = 0.0
+            ship.rumble(1.0, 1.0, 640)
+
     def _check_extra_lives(self):
 
         """Award a life when crossing score thresholds (once each)."""
+        if self.play_mode == "coop":
+            for ship in self._ships():
+                flags = getattr(ship, "life_flags", None)
+                if not flags or len(flags) < len(self.life_thresholds):
+                    ship.life_flags = [False] * len(self.life_thresholds)
+                    flags = ship.life_flags
+                for i, (threshold, _) in enumerate(self.life_thresholds):
+                    if not flags[i] and getattr(ship, "score", 0) >= threshold:
+                        flags[i] = True
+                        self.lives_shared += 1
+                        for s in self._ships():
+                            s.lives = self.lives_shared
+                        self.sounds.play("1up")
+                        self.cheat_msg = t("one_up")
+                        self.cheat_kind = "1up"
+                        self.cheat_msg_timer = 5.0
+                        self.life_flash_timer = 4.0
+                        self.life_flash_index = max(0, self.lives_shared - 1)
+            return
         for i, (threshold, awarded) in enumerate(self.life_thresholds):
             if not awarded and self.score >= threshold:
                 self.life_thresholds[i] = (threshold, True)
@@ -552,6 +893,7 @@ class Game:
                     self.player.lives += 1
                     self.sounds.play("1up")
                     self.cheat_msg = t("one_up")
+                    self.cheat_kind = "1up"
                     self.cheat_msg_timer = 5.0
                     self.life_flash_timer = 4.0
                     self.life_flash_index = max(0, self.player.lives - 1)
@@ -591,7 +933,8 @@ class Game:
         self.life_thresholds = [(1337, False), (8086, False)]
         self.input_grace = 0.4
         self.cheat_buffer = ""
-        self.cheat_msg = f"STAGE {stage}"
+        self.cheat_msg = t("cheat_stage").format(n=stage)
+        self.cheat_kind = "stage"
         self.cheat_msg_timer = 5.0
         self.used_cheat = True
         self.bosses_defeated = max(0, (stage - 1) // 5)
@@ -606,23 +949,52 @@ class Game:
         self.hs_char_index = 0
         self.shake_amount = 0.0
         self.explosions.clear()  # remove explosion remnants from HS screen
+        self.hs_queue = []
+        self.hs_slot_label = 1
+        block = (self.difficulty == "novice"
+                 or getattr(self, "used_cheat", False)
+                 or getattr(self, "phenix_cheat", False))
+        if self.hotseat and self.slots[0] and self.slots[1]:
+            # Show last player's score as default; queue every qualifying run
+            self.score = max(self.slots[0]["score"], self.slots[1]["score"])
+            if not block:
+                for i, sl in enumerate(self.slots):
+                    if sl and is_highscore(sl["score"], self.hs_entries):
+                        self.hs_queue.append(i)
+            if self.hs_queue:
+                self._hs_prepare_entry(self.hs_queue.pop(0))
+            else:
+                self.hs_phase = "table"
+            return
         # Novice / cheat: view table only, no name entry
-        if (self.difficulty == "novice"
-                or getattr(self, "used_cheat", False)
-                or getattr(self, "phenix_cheat", False)):
+        if block:
             self.hs_phase = "table"
         elif is_highscore(self.score, self.hs_entries):
             self.hs_phase = "enter"
         else:
             self.hs_phase = "table"
 
+    def _hs_prepare_entry(self, slot_idx):
+        sl = self.slots[slot_idx]
+        self.score = sl["score"]
+        self.hs_slot_label = slot_idx + 1
+        self.hs_name = ["A", "A", "A"]
+        self.hs_char_index = 0
+        self.hs_submitted = False
+        self.hs_phase = "enter"
+
     def _submit_highscore(self):
         if self.hs_submitted:
             return
         name = "".join(self.hs_name)
-        self.hs_entries = insert_score(name, self.score)
+        self.hs_entries = insert_score(
+            name, self.score, coop=(getattr(self, "play_mode", "solo") == "coop")
+        )
         self.hs_submitted = True
-        self.hs_phase = "table"
+        if self.hs_queue:
+            self._hs_prepare_entry(self.hs_queue.pop(0))
+        else:
+            self.hs_phase = "table"
 
     def _hs_cycle_letter(self, direction):
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -764,9 +1136,12 @@ class Game:
             th = max(1, int(ih * scale))
             # Fast scale once; convert for faster blit
             scaled = pygame.transform.scale(img, (tw, th)).convert()
-            # Crop to panel size; match display format for fast blit on iGPU
+            # Same pixel format as the display → blit without conversion
             try:
-                surf = pygame.Surface((panel_w, panel_h)).convert()
+                if getattr(self, "screen", None) is not None:
+                    surf = pygame.Surface((panel_w, panel_h), 0, self.screen)
+                else:
+                    surf = pygame.Surface((panel_w, panel_h)).convert()
             except Exception:
                 surf = pygame.Surface((panel_w, panel_h))
             if align_right:
@@ -794,6 +1169,25 @@ class Game:
             self.screen.blit(self._bezel_blit_left, (0, 0))
         if self._bezel_blit_right is not None:
             self.screen.blit(self._bezel_blit_right, (vr.right, 0))
+
+    def _present_game_scaled(self, vr, dest_x, dest_y):
+        """Scale logical canvas into the window game band."""
+        if vr.width == BASE_WIDTH and vr.height == BASE_HEIGHT:
+            self.screen.blit(self.game_surface, (dest_x, dest_y))
+            return
+        key = (vr.width, vr.height)
+        buf = getattr(self, "_scaled_game_buf", None)
+        if buf is None or buf.get_size() != key:
+            try:
+                if self.screen is not None:
+                    self._scaled_game_buf = pygame.Surface(key, 0, self.screen)
+                else:
+                    self._scaled_game_buf = pygame.Surface(key).convert()
+            except Exception:
+                self._scaled_game_buf = pygame.Surface(key)
+            buf = self._scaled_game_buf
+        pygame.transform.scale(self.game_surface, key, buf)
+        self.screen.blit(buf, (dest_x, dest_y))
 
     def _prepare_monitor_env(self):
         """Set SDL window position for the selected monitor before set_mode."""
@@ -1080,21 +1474,41 @@ class Game:
             "monitor_index": int(getattr(self, "monitor_index", 0) or 0),
             "sfx_volume": self.sfx_volume,
             "music_volume": self.music_volume,
+            "rumble_level": int(getattr(self, "rumble_level", 3)),
+            "autofire": bool(getattr(self, "autofire", True)),
             "language": self.language,
             "show_fps": self.show_fps,
             "scanlines": int(getattr(self, "scanlines", 0) or 0),
         })
 
     # --- Menu navigation ---
+    def _is_menu_up(self, key):
+        # W = QWERTY, Z = AZERTY (ZQSD)
+        return key in (pygame.K_UP, pygame.K_w, pygame.K_z)
+
+    def _is_menu_down(self, key):
+        return key in (pygame.K_DOWN, pygame.K_s)
+
+    def _is_menu_confirm(self, key):
+        # Enter, Space and fire keys all validate
+        return key in (
+            pygame.K_RETURN, pygame.K_KP_ENTER,
+            pygame.K_SPACE, pygame.K_LCTRL, pygame.K_RCTRL,
+        )
+
     def _menu_nav(self, direction):
         """direction: -1 up, +1 down"""
         if self.menu_screen == "main":
-            n = 6  # Jouer, Difficulte, Options, High Scores, Credits, Quitter
+            n = 7  # Jouer, 2 joueurs, Difficulte, Options, High Scores, Credits, Quitter
         elif self.menu_screen == "reset_confirm":
             n = 2  # Oui, Non
         else:
             n = len(self._options_spec())
         self.menu_index = (self.menu_index + direction) % n
+
+    def _focus_option(self, name):
+        spec = self._options_spec()
+        self.menu_index = spec.index(name) if name in spec else 0
 
 
     def _options_labels(self):
@@ -1116,8 +1530,10 @@ class Game:
         bezel_label = t(bezel_keys.get(getattr(self, "bezel_style", "phoenix"), "bezel_phoenix"))
         mapping = {
             "control": f"{t('opt_control')} :  <  {ctrl}  >",
+            "autofire": f"{t('opt_autofire')} :  <  {t('yes') if getattr(self, 'autofire', True) else t('no')}  >",
             "sfx": f"{t('opt_sfx')} :  <  {vol_pct}%  >",
             "music": f"{t('opt_music')} :  <  {mus_pct}%  >",
+            "rumble": f"{t('opt_rumble')} :  <  {int(getattr(self, 'rumble_level', 3))} / 5  >",
             "display": f"{t('opt_display')} :  <  {disp}  >",
             "bezel": f"{t('opt_bezel')} :  <  {bezel_label}  >",
             "fps": f"{t('opt_fps')} :  <  {fps_label}  >",
@@ -1130,7 +1546,7 @@ class Game:
 
     def _options_spec(self):
         """Ordered option ids (bezel / monitor only when relevant)."""
-        items = ["control", "sfx", "music", "display"]
+        items = ["control", "autofire", "sfx", "music", "rumble", "display"]
         mode = getattr(self, "display_mode", "fullscreen")
         if mode == "fullscreen":
             items.append("bezel")
@@ -1141,6 +1557,11 @@ class Game:
         """direction: -1 left, +1 right — change current option value"""
         if self.menu_screen == "main":
             if self.menu_index == 1:
+                modes = getattr(self, "PLAY_MODES", ["solo", "hotseat", "coop"])
+                cur = getattr(self, "play_mode", "solo")
+                idx = modes.index(cur) if cur in modes else 0
+                self.play_mode = modes[(idx + direction) % len(modes)]
+            elif self.menu_index == 2:
                 idx = self.DIFFICULTIES.index(self.difficulty)
                 self.difficulty = self.DIFFICULTIES[(idx + direction) % len(self.DIFFICULTIES)]
             return
@@ -1155,6 +1576,9 @@ class Game:
             if self.input_mode == "gamepad" and not self.gamepad_detected:
                 self.input_mode = "keyboard"
             self.save_settings()
+        elif key == "autofire":
+            self.autofire = not bool(getattr(self, "autofire", True))
+            self.save_settings()
         elif key == "sfx":
             self.sfx_volume = max(0.0, min(1.0, self.sfx_volume + direction * 0.1))
             self.sounds.set_master_volume(self.sfx_volume)
@@ -1163,6 +1587,15 @@ class Game:
         elif key == "music":
             self.music_volume = max(0.0, min(1.0, self.music_volume + direction * 0.1))
             self.sounds.set_music_volume(self.music_volume)
+            self.save_settings()
+        elif key == "rumble":
+            self.rumble_level = max(0, min(5, int(getattr(self, "rumble_level", 3)) + direction))
+            if self.player:
+                self.player.rumble_level = self.rumble_level
+                self.player._joy = self.joystick
+                self.player._rumble_enabled = True
+                if self.rumble_level > 0:
+                    self.player.rumble(0.35, 0.55, 180)
             self.save_settings()
         elif key == "display":
             modes = ["window", "fullscreen", "borderless"]
@@ -1695,16 +2128,16 @@ class Game:
             return
         if self.menu_screen == "reset_confirm":
             self.menu_screen = "options"
-            (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())  # Reset High Scores line
+            self._focus_option("reset_hs")
         elif self.menu_screen == "options":
             self.menu_screen = "main"
-            self.menu_index = 2  # OPTIONS
+            self.menu_index = 3  # OPTIONS
         elif self.menu_screen == "highscores":
             self.menu_screen = "main"
-            self.menu_index = 3
+            self.menu_index = 4
         elif self.menu_screen == "credits":
             self.menu_screen = "main"
-            self.menu_index = 4
+            self.menu_index = 5
         else:
             self.menu_screen = "main"
             self.menu_index = 0
@@ -1713,24 +2146,41 @@ class Game:
 
         if self.menu_screen == "main":
             if self.menu_index == 0:
-                self._apply_difficulty_start()
-                self.started = True
-                self.input_grace = 0.35
+                mode = getattr(self, "play_mode", "solo")
+                if mode == "hotseat":
+                    self.hotseat = True
+                    self.current_p = 0
+                    self._init_hotseat_slots()
+                    self._apply_slot(self.slots[0])
+                    self.started = True
+                    self.hotseat_wait = True
+                    self.hotseat_next = 0
+                    self.input_grace = 0.35
+                elif mode == "coop":
+                    self._start_coop()
+                else:
+                    self.hotseat = False
+                    self.player2 = None
+                    self._apply_difficulty_start()
+                    self.started = True
+                    self.input_grace = 0.35
             elif self.menu_index == 1:
+                pass  # Mode: Left/Right only
+            elif self.menu_index == 2:
                 # Difficulty changes only with Left/Right — Enter does not cycle
                 pass
-            elif self.menu_index == 2:
+            elif self.menu_index == 3:
                 self.menu_screen = "options"
                 self.menu_index = 0
-            elif self.menu_index == 3:
+            elif self.menu_index == 4:
                 self.hs_entries = load_highscores()
                 self.menu_screen = "highscores"
                 self.menu_index = 0
-            elif self.menu_index == 4:
+            elif self.menu_index == 5:
                 self.menu_screen = "credits"
                 self.credits_scroll = float(BASE_HEIGHT)
                 self.menu_index = 0
-            elif self.menu_index == 5:
+            elif self.menu_index == 6:
                 self.running = False
         elif self.menu_screen == "reset_confirm":
             if self.menu_index == 0:  # Oui
@@ -1750,7 +2200,7 @@ class Game:
                     self.menu_index = 0
                 else:
                     self.menu_screen = "main"
-                    self.menu_index = 2
+                    self.menu_index = 3
 
     # --- Input ---
 
@@ -1784,10 +2234,25 @@ class Game:
                 if self.attract_mode:
                     self._end_attract()
                     continue
+                if self.hotseat_wait and self.started and not self.game_over:
+                    if getattr(self, "input_grace", 0) <= 0:
+                        self._hotseat_resume()
+                    continue
                 # Phenix activation (in-game only)
                 if self.started and not self.paused and not self.game_over:
-                    if event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT, pygame.K_x):
-                        self._activate_phenix_from_input()
+                    if event.key == pygame.K_LSHIFT:
+                        # Coop split-keyboard P1 only
+                        if self.play_mode == "coop" and getattr(self.player, "input_scheme", "") == "kb1":
+                            self._activate_phenix_from_input(self.player)
+                    elif event.key == pygame.K_RSHIFT:
+                        if self.play_mode == "coop":
+                            # P2 keyboard (or 1P-style layout)
+                            target = self.player2
+                            if getattr(self.player, "input_scheme", "") == "solo":
+                                target = self.player2
+                            self._activate_phenix_from_input(target)
+                        else:
+                            self._activate_phenix_from_input(self.player)
                 if event.key == pygame.K_ESCAPE:
                     if self.started and not self.game_over:
                         if self.quit_confirm:
@@ -1805,20 +2270,20 @@ class Game:
                 # Pause menu (in-game)
                 if self.paused and self.started and not self.game_over:
                     if self.pause_options:
-                        if event.key in (pygame.K_UP, pygame.K_w):
+                        if self._is_menu_up(event.key):
                             self._menu_nav(-1)
-                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        elif self._is_menu_down(event.key):
                             self._menu_nav(1)
                         elif event.key in (pygame.K_LEFT, pygame.K_a):
                             self._menu_adjust(-1)
                         elif event.key in (pygame.K_RIGHT, pygame.K_d):
                             self._menu_adjust(1)
-                        elif event.key == pygame.K_RETURN:
+                        elif self._is_menu_confirm(event.key):
                             if self.menu_screen == "reset_confirm":
                                 if self.menu_index == 0:
                                     self.hs_entries = reset_highscores()
                                 self.menu_screen = "options"
-                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                                self._focus_option("reset_hs")
                             else:
                                 spec = self._options_spec()
                                 key = spec[self.menu_index] if 0 <= self.menu_index < len(spec) else ""
@@ -1831,16 +2296,16 @@ class Game:
                         elif event.key == pygame.K_ESCAPE:
                             if self.menu_screen == "reset_confirm":
                                 self.menu_screen = "options"
-                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                                self._focus_option("reset_hs")
                             else:
                                 self.pause_options = False
                                 self.menu_index = 0
                     else:
-                        if event.key in (pygame.K_UP, pygame.K_w):
+                        if self._is_menu_up(event.key):
                             self.pause_index = (self.pause_index - 1) % 3
-                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        elif self._is_menu_down(event.key):
                             self.pause_index = (self.pause_index + 1) % 3
-                        elif event.key == pygame.K_RETURN:
+                        elif self._is_menu_confirm(event.key):
                             if self.pause_index == 0:  # Reprendre
                                 self.paused = False
                             elif self.pause_index == 1:  # Options
@@ -1856,11 +2321,11 @@ class Game:
                             continue
                 # Quit game confirm (menus) — ESC already toggled above
                 elif self.quit_confirm and not self.started:
-                    if event.key in (pygame.K_UP, pygame.K_w):
+                    if self._is_menu_up(event.key):
                         self.quit_index = (self.quit_index - 1) % 2
-                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                    elif self._is_menu_down(event.key):
                         self.quit_index = (self.quit_index + 1) % 2
-                    elif event.key == pygame.K_RETURN:
+                    elif self._is_menu_confirm(event.key):
                         if self.quit_index == 0:
                             self.running = False
                         else:
@@ -1890,7 +2355,8 @@ class Game:
                                 self.player.infinite_lives = True
                                 self.player.lives = 99
                                 self.cheat_buffer = ""
-                                self.cheat_msg = "INFINITE LIVES"
+                                self.cheat_msg = t("cheat_live")
+                                self.cheat_kind = "live"
                                 self.cheat_msg_timer = 5.0
                             elif "PHEN" in self.cheat_buffer:
                                 self.used_cheat = True
@@ -1898,7 +2364,8 @@ class Game:
                                 self.player.phenix_auto_refill = True
                                 self.player.phenix_gauge = 10
                                 self.cheat_buffer = ""
-                                self.cheat_msg = "PHENIX MAX"
+                                self.cheat_msg = t("cheat_phen")
+                                self.cheat_kind = "phen"
                                 self.cheat_msg_timer = 5.0
                         else:
                             # Any non-alnum key (Enter, Esc already handled, Space, arrows...) returns
@@ -1906,19 +2373,19 @@ class Game:
                                 self.menu_screen = "main"
                                 self.menu_index = 0
                                 self.cheat_buffer = ""
-                    elif event.key in (pygame.K_UP, pygame.K_w):
+                    elif self._is_menu_up(event.key):
                         self._reset_menu_idle()
                         self._menu_nav(-1)
-                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                    elif self._is_menu_down(event.key):
                         self._reset_menu_idle()
                         self._menu_nav(1)
-                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                    elif event.key in (pygame.K_LEFT, pygame.K_a, pygame.K_q):
                         self._reset_menu_idle()
                         self._menu_adjust(-1)
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         self._reset_menu_idle()
                         self._menu_adjust(1)
-                    elif event.key == pygame.K_RETURN:
+                    elif self._is_menu_confirm(event.key):
                         self._reset_menu_idle()
                         self._menu_confirm()
                 
@@ -1928,20 +2395,20 @@ class Game:
                             self.hs_char_index = (self.hs_char_index - 1) % 3
                         elif event.key == pygame.K_RIGHT:
                             self.hs_char_index = (self.hs_char_index + 1) % 3
-                        elif event.key == pygame.K_UP:
+                        elif self._is_menu_up(event.key):
                             self._hs_cycle_letter(1)
-                        elif event.key == pygame.K_DOWN:
+                        elif self._is_menu_down(event.key):
                             self._hs_cycle_letter(-1)
                         elif event.key == pygame.K_BACKSPACE:
                             self.hs_char_index = max(0, self.hs_char_index - 1)
-                        elif event.key == pygame.K_RETURN:
+                        elif self._is_menu_confirm(event.key):
                             self._submit_highscore()
                         elif event.unicode and event.unicode.isalnum():
                             self.hs_name[self.hs_char_index] = event.unicode.upper()
                             self.hs_char_index = min(2, self.hs_char_index + 1)
                             if self.hs_char_index == 2 and self.hs_name[2] != "A":
                                 pass  # stay on last or auto-advance feel
-                    elif self.hs_phase == "table" and event.key == pygame.K_RETURN:
+                    elif self.hs_phase == "table" and self._is_menu_confirm(event.key):
                         saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0))
                         self.__init__(soft=True)
                         self.input_mode, self.display_mode, self.sfx_volume, self.music_volume, self.fps_target, self.show_fps, self.difficulty, self.language, self.bezel_style, self.monitor_index = saved
@@ -1954,10 +2421,25 @@ class Game:
                 if self.attract_mode:
                     self._end_attract()
                     continue
+                if self.hotseat_wait and self.started and not self.game_over:
+                    if getattr(self, "input_grace", 0) <= 0:
+                        self._hotseat_resume()
+                    continue
                 # B = Phenix while playing (menus still use B as back elsewhere)
                 if (event.button == 1 and self.started and not self.paused
                         and not self.game_over and not self.quit_confirm):
-                    self._activate_phenix_from_input()
+                    target = self.player
+                    if self.play_mode == "coop":
+                        inst = getattr(event, "instance_id", getattr(event, "joy", None))
+                        for s in self._ships():
+                            joy = getattr(s, "_joy", None)
+                            if joy is None:
+                                continue
+                            jid = getattr(joy, "get_instance_id", lambda: joy.get_id())()
+                            if jid == inst or joy.get_id() == getattr(event, "joy", -1):
+                                target = s
+                                break
+                    self._activate_phenix_from_input(target)
                 # Start button (7 Xbox / 9 some pads) — pause or quit confirm
                 if event.button in (7, 9, 6):
                     if self.started and not self.game_over:
@@ -1977,7 +2459,7 @@ class Game:
                                 if self.menu_index == 0:
                                     self.hs_entries = reset_highscores()
                                 self.menu_screen = "options"
-                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                                self._focus_option("reset_hs")
                             else:
                                 spec = self._options_spec()
                                 key = spec[self.menu_index] if 0 <= self.menu_index < len(spec) else ""
@@ -1990,7 +2472,7 @@ class Game:
                         elif event.button == 1:
                             if self.menu_screen == "reset_confirm":
                                 self.menu_screen = "options"
-                                (lambda s: s.index("reset_hs") if "reset_hs" in s else 0)(self._options_spec())
+                                self._focus_option("reset_hs")
                             else:
                                 self.pause_options = False
                                 self.menu_index = 0
@@ -2249,28 +2731,77 @@ class Game:
             self.starfield.update(self.dt)
             self.sounds.play_electric(False)
             return
+
+        if self.hotseat_wait:
+            self.starfield.update(self.dt)
+            self.sounds.play_electric(False)
+            return
+
+        if self.hotseat_hold > 0:
+            self.hotseat_hold = max(0.0, self.hotseat_hold - self.dt)
+            self.starfield.update(self.dt, self.player.x if self.player else BASE_WIDTH / 2)
+            for exp in self.explosions[:]:
+                exp.update(self.dt)
+                if exp.is_finished():
+                    self.explosions.remove(exp)
+            tesla_on = False
+            if self.tesla_fx is not None:
+                self.tesla_fx.update(self.dt)
+                tesla_on = not self.tesla_fx.is_finished()
+                if not tesla_on:
+                    self.tesla_fx = None
+            self.sounds.play_electric(tesla_on)
+            if self.shake_amount > 0:
+                self.shake_amount = max(0.0, self.shake_amount - SCREEN_SHAKE_DECAY * self.dt)
+            if self.hotseat_hold <= 0:
+                self._hotseat_finish_hold()
+            return
             
         keys = pygame.key.get_pressed()
         
+        edge_killed_any = False
         if self.stage_transition is None:
             ai_move = ai_shoot = None
             if self.attract_mode:
                 ai_move, ai_shoot = self._attract_ai()
-            edge_killed = self.player.update(
-                self.dt, keys, self.input_mode, self.joystick,
-                allow_shoot=(self.input_grace <= 0),
-                ai_move=ai_move, ai_shoot=ai_shoot,
-            )
+            for ship in self._ships():
+                ship.rumble_level = int(getattr(self, "rumble_level", 3))
+                ship.autofire = True if self.attract_mode else bool(getattr(self, "autofire", True))
+                if getattr(self, "play_mode", "solo") != "coop":
+                    mode = self.input_mode
+                    joy = self.joystick
+                    ship.input_scheme = "solo"
+                else:
+                    scheme = getattr(ship, "input_scheme", "solo")
+                    joy = getattr(ship, "_joy", None)
+                    mode = "gamepad" if scheme == "pad" else "keyboard"
+                if self.attract_mode and ship is self.player:
+                    edge_killed = ship.update(
+                        self.dt, keys, mode, joy,
+                        allow_shoot=(self.input_grace <= 0),
+                        ai_move=ai_move, ai_shoot=ai_shoot,
+                    )
+                else:
+                    edge_killed = ship.update(
+                        self.dt, keys, mode, joy,
+                        allow_shoot=(self.input_grace <= 0),
+                    )
+                if edge_killed:
+                    edge_killed_any = True
+                    kind = "gameover" if ship.dying else "edge"
+                    self.explosions.append(Explosion(ship.x, ship.y, kind=kind))
+                    self.shake_amount = 22.0 if ship.dying else 14.0
+                    self.sounds.play("explosion_big" if ship.dying else "explosion")
+                    side = getattr(ship, "last_edge_side", 0) or getattr(ship, "edge_side", -1)
+                    self.tesla_fx = TeslaCoilFx(side, ship.y)
+                    self.sounds.play_electric(True)
+                    if getattr(self, "play_mode", "") == "coop" and getattr(ship, "just_lost_life", False):
+                        self._on_coop_life_lost(ship)
         else:
-            edge_killed = False
-        # Electric crackle while edge lightning is active
-        self.sounds.play_electric(self.player.edge_flash > 0.08 and not self.player.dying)
-        if edge_killed:
-            kind = "gameover" if self.player.dying else "edge"
-            self.explosions.append(Explosion(self.player.x, self.player.y, kind=kind))
-            self.shake_amount = 22.0 if self.player.dying else 14.0
-            self.sounds.play("explosion_big" if self.player.dying else "explosion")
-            self.sounds.play_electric(False)
+            edge_killed_any = False
+        tesla_on = self.tesla_fx is not None and not self.tesla_fx.is_finished()
+        flash_on = any(p.edge_flash > 0.08 and not p.dying for p in self._ships())
+        self.sounds.play_electric(tesla_on or flash_on)
         
         # Attract mode: 30s demo or death → back to menu (no high score)
         if self.attract_mode:
@@ -2279,24 +2810,38 @@ class Game:
                 self._end_attract()
                 return
 
-        # Game over only after death disappearance finishes
-        if not self.player.alive and not self.game_over and not self.attract_mode:
-            self.game_over = True
-            self._begin_highscore_flow()
+        # Game over / hot-seat hand-off after death disappearance or a lost life
+        if not self.attract_mode and not self.game_over and self.hotseat_hold <= 0:
+            if (self.hotseat and getattr(self.player, "just_lost_life", False)
+                    and self.player.alive and not self.player.dying
+                    and self.stage_transition is None):
+                self._hotseat_arm_hold("switch", self.HOTSEAT_HOLD_LIFE)
+                if self.hotseat_hold > 0:
+                    return
+            elif not any(p.alive for p in self._ships()):
+                if self.hotseat:
+                    self._hotseat_arm_hold("eliminated", self.HOTSEAT_HOLD_FINAL)
+                else:
+                    self._hotseat_arm_hold("gameover", self.HOTSEAT_HOLD_FINAL)
+                return
         
         # Starfield with parallax based on player movement
         self.starfield.update(self.dt, self.player.x)
         
         # Stage transition: ship flies off top
         if self.stage_transition == "fly_up":
-            self.player.y -= 420 * self.dt
-            self.player.engine_intensity = 1.0
+            for ship in self._ships():
+                if ship.alive or ship.dying:
+                    ship.y -= 420 * self.dt
+                    ship.engine_intensity = 1.0
             self.starfield.update(self.dt, self.player.x)
-            if self.player.y < -80:
+            if all((not s.alive) or s.y < -80 for s in self._ships()):
                 self.stage += 1
                 self._setup_stage(self.stage)
-                self.player.y = BASE_HEIGHT + 60
-                self.player.x = BASE_WIDTH // 2
+                xs = [BASE_WIDTH // 2 - 70, BASE_WIDTH // 2 + 70] if self.play_mode == "coop" else [BASE_WIDTH // 2]
+                for i, ship in enumerate(self._ships()):
+                    ship.y = BASE_HEIGHT + 60
+                    ship.x = xs[min(i, len(xs) - 1)]
                 self.stage_transition = "arrive"
                 self.transition_timer = 0.0
             # still draw explosions etc lightly
@@ -2309,12 +2854,16 @@ class Game:
         if self.stage_transition == "arrive":
             # Ship enters from bottom
             target_y = BASE_HEIGHT - 95
-            self.player.y -= 380 * self.dt
-            self.player.engine_intensity = 1.0
+            for ship in self._ships():
+                if ship.alive:
+                    ship.y -= 380 * self.dt
+                    ship.engine_intensity = 1.0
             self.starfield.update(self.dt, self.player.x)
             self.formation.update(self.dt, self.player.x)
-            if self.player.y <= target_y:
-                self.player.y = target_y
+            if all((not s.alive) or s.y <= target_y for s in self._ships()):
+                for ship in self._ships():
+                    if ship.alive:
+                        ship.y = target_y
                 self.stage_transition = None
                 self.input_grace = 0.4
             for exp in self.explosions[:]:
@@ -2339,19 +2888,21 @@ class Game:
                 if alive_birds < 6:
                     x = random.uniform(60, BASE_WIDTH - 60)
                     st = 1 if random.random() < 0.67 else 2
-                    bird = Enemy(x, -30, formation_index=99, stage=st)
+                    bird = Enemy(x, -30, formation_index=alive_birds + random.randint(0, 6), stage=st)
                     bird.speed_mult = stage_speed_mult(self.stage) * self.difficulty_speed_mult()
-                    bird.state = "diving"
-                    bird.dive_target_x = self.player.x
+                    bird.state = "formation"
+                    bird.start_dive(x)  # dive in their spawn lane, not a shared player X
                     self.formation.enemies.append(bird)
         
         # Stage clear → fly to next stage (non-boss content)
         content = stage_content(self.stage)
         if (self.stage_transition is None and content != 5
-                and self.formation.all_dead() and not self.player.dying
+                and self.formation.all_dead()
+                and not any(s.dying for s in self._ships())
                 and self.boss_saucer is None):
             self.stage_transition = "fly_up"
-            self.player.destroy_bullet()
+            for ship in self._ships():
+                ship.destroy_bullet()
         
         # Boss killed → cataclysmic saucer explosion, kill all birds, then fly up
         if (self.boss_saucer is not None and not self.boss_saucer.alive
@@ -2394,11 +2945,13 @@ class Game:
             # After spectacle, ship flies to next stage
             if self.transition_timer > 1.8:
                 self.stage_transition = "fly_up"
-                self.player.destroy_bullet()
+                for ship in self._ships():
+                    ship.destroy_bullet()
             return
         
         # Player bullet(s) vs Enemies / Boss
-        for shot_i, bullet_rect in self.player.get_bullet_rects():
+        for ship in self._ships():
+          for shot_i, bullet_rect in ship.get_bullet_rects():
             hit_something = False
             # Boss saucer armor / core
             if self.boss_saucer is not None and self.boss_saucer.alive:
@@ -2406,21 +2959,21 @@ class Game:
                 if result is not None:
                     kind, target = result
                     if kind == "cell":
-                        self.player.destroy_bullet("neutral", index=shot_i)
+                        ship.destroy_bullet("neutral", index=shot_i)
                         self.explosions.append(Explosion(target.x, target.y, kind="enemy"))
                         self.shake_amount = 3.5
                         self.sounds.play("enemy_explosion", volume=0.4)
-                        self.score += 1
+                        self._add_score(ship, 1)
                     elif kind == "deco":
-                        self.player.destroy_bullet("neutral", index=shot_i)
+                        ship.destroy_bullet("neutral", index=shot_i)
                         self.explosions.append(Explosion(target.x, target.y, kind="enemy"))
                         self.shake_amount = 5.0
                         self.sounds.play("enemy_explosion")
-                        self.score += 50
+                        self._add_score(ship, 50)
                     elif kind == "boss":
-                        self.player.destroy_bullet("valid", index=shot_i)
+                        ship.destroy_bullet("valid", index=shot_i)
                         target.kill()
-                        self.score += self._boss_points()
+                        self._add_score(ship, self._boss_points())
                         self.explosions.append(Explosion(target.x, target.y, kind="gameover"))
                         self.shake_amount = 20.0
                         self.sounds.play("explosion_big")
@@ -2432,28 +2985,28 @@ class Game:
                 if isinstance(enemy, BigBird):
                     if bullet_rect.colliderect(enemy.get_left_wing_hitbox()):
                         if enemy.hit_wing("left"):
-                            self.player.destroy_bullet("neutral", index=shot_i)
+                            ship.destroy_bullet("neutral", index=shot_i)
                             self.explosions.append(Explosion(enemy.x - 35, enemy.y, kind="enemy"))
                             self.shake_amount = 3.0
                             self.sounds.play("enemy_explosion", volume=0.5)
                         else:
-                            self.player.destroy_bullet("neutral", index=shot_i)
+                            ship.destroy_bullet("neutral", index=shot_i)
                         hit_something = True
                         break
                     if bullet_rect.colliderect(enemy.get_right_wing_hitbox()):
                         if enemy.hit_wing("right"):
-                            self.player.destroy_bullet("neutral", index=shot_i)
+                            ship.destroy_bullet("neutral", index=shot_i)
                             self.explosions.append(Explosion(enemy.x + 35, enemy.y, kind="enemy"))
                             self.shake_amount = 3.0
                             self.sounds.play("enemy_explosion", volume=0.5)
                         else:
-                            self.player.destroy_bullet("neutral", index=shot_i)
+                            ship.destroy_bullet("neutral", index=shot_i)
                         hit_something = True
                         break
                     if bullet_rect.colliderect(enemy.get_body_hitbox()):
                         enemy.kill()
-                        self.player.destroy_bullet("valid", index=shot_i)
-                        self.score += self._enemy_points(getattr(enemy, "stage", 3))
+                        ship.destroy_bullet("valid", index=shot_i)
+                        self._add_score(ship, self._enemy_points(getattr(enemy, "stage", 3)))
                         self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
                         self.shake_amount = 7.0
                         self.sounds.play("enemy_explosion")
@@ -2462,8 +3015,8 @@ class Game:
                     # Catch-all: silhouette overlap that slipped between wing/body boxes
                     if bullet_rect.colliderect(enemy.get_hitbox()):
                         enemy.kill()
-                        self.player.destroy_bullet("valid", index=shot_i)
-                        self.score += self._enemy_points(getattr(enemy, "stage", 3))
+                        ship.destroy_bullet("valid", index=shot_i)
+                        self._add_score(ship, self._enemy_points(getattr(enemy, "stage", 3)))
                         self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
                         self.shake_amount = 7.0
                         self.sounds.play("enemy_explosion")
@@ -2472,8 +3025,8 @@ class Game:
                 else:
                     if bullet_rect.colliderect(enemy.get_hitbox()):
                         enemy.kill()
-                        self.player.destroy_bullet("valid", index=shot_i)
-                        self.score += self._enemy_points(getattr(enemy, "stage", 1))
+                        ship.destroy_bullet("valid", index=shot_i)
+                        self._add_score(ship, self._enemy_points(getattr(enemy, "stage", 1)))
                         self.explosions.append(Explosion(enemy.x, enemy.y, kind="enemy"))
                         self.shake_amount = 5.5
                         self.sounds.play("enemy_explosion")
@@ -2482,79 +3035,86 @@ class Game:
             if hit_something:
                 break
 
-        # Enemy attacks vs Player
-        if self.player.alive and not self.player.dying:
-            player_hitbox = self.player.get_hitbox()
-            
-            # Boss saucer hull contact → fatal
+        # Enemy attacks vs Player(s) — ships do not collide with each other
+        for ship in self._ships():
+            if not ship.alive or ship.dying:
+                continue
+            player_hitbox = ship.get_hitbox()
             if self.boss_saucer is not None and self.boss_saucer.alive:
                 hull = self.boss_saucer.get_hull_hitbox()
                 if hull.width > 0 and player_hitbox.colliderect(hull):
-                    if not self.player.dying:
-                        if self.player.infinite_lives:
-                            # Bounce / damage without death
-                            self.player.hit()
-                            self.explosions.append(Explosion(self.player.x, self.player.y, kind="bullet"))
-                            self.shake_amount = 14.0
-                            self.sounds.play("explosion")
-                            # Nudge player down away from hull
-                            self.player.y = min(BASE_HEIGHT - 80, self.player.y + 40)
+                    if ship.infinite_lives:
+                        ship.hit()
+                        self.explosions.append(Explosion(ship.x, ship.y, kind="bullet"))
+                        self.shake_amount = 14.0
+                        self.sounds.play("explosion")
+                        ship.y = min(BASE_HEIGHT - 80, ship.y + 40)
+                    else:
+                        if self.play_mode == "coop":
+                            ship.hit()
+                            self._on_coop_life_lost(ship)
                         else:
-                            self.player.lives = 0
-                            self.player.dying = True
-                            self.player.death_timer = 0.0
-                            self.player.invulnerable = 0.0
-                            self.player.phenix_gauge = float(getattr(self.player, "phenix_min_gauge", 0))
-                            self.player.combo_streak = 0
-                            self.player.phenix_timer = 0.0
-                            self.explosions.append(Explosion(self.player.x, self.player.y, kind="gameover"))
-                            self.shake_amount = 24.0
-                            self.sounds.play("explosion_big")
-                
-                # Boss saucer bullets
+                            ship.lives = 0
+                            ship.dying = True
+                            ship.death_timer = 0.0
+                            ship.invulnerable = 0.0
+                            ship.rumble(1.0, 1.0, 640)
+                        ship.phenix_gauge = float(getattr(ship, "phenix_min_gauge", 0))
+                        ship.combo_streak = 0
+                        ship.phenix_timer = 0.0
+                        self.explosions.append(Explosion(ship.x, ship.y, kind="gameover"))
+                        self.shake_amount = 24.0
+                        self.sounds.play("explosion_big")
                 for b in self.boss_saucer.bullets[:]:
                     if b.alive and b.get_hitbox().colliderect(player_hitbox):
                         b.alive = False
-                        if (not self.player.is_phenix) and self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
-                            self.player.hit()
-                            kind = "gameover" if self.player.dying else "bullet"
-                            self.explosions.append(Explosion(self.player.x, self.player.y, kind=kind))
-                            self.shake_amount = 22.0 if self.player.dying else 12.0
-                            self.sounds.play("explosion_big" if self.player.dying else "explosion")
+                        if (not ship.is_phenix) and ship.invulnerable <= 0 and ship.alive and not ship.dying:
+                            ship.hit()
+                            if self.play_mode == "coop":
+                                self._on_coop_life_lost(ship)
+                            kind = "gameover" if ship.dying else "bullet"
+                            self.explosions.append(Explosion(ship.x, ship.y, kind=kind))
+                            self.shake_amount = 22.0 if ship.dying else 12.0
+                            self.sounds.play("explosion_big" if ship.dying else "explosion")
                         break
-            
             for bullet in self.formation.bullets[:]:
                 if bullet.alive and bullet.get_hitbox().colliderect(player_hitbox):
                     bullet.alive = False
-                    # Always play hit explosion if damage can be applied
-                    if (not self.player.is_phenix) and self.player.invulnerable <= 0 and self.player.alive and not self.player.dying:
-                        self.player.hit()
-                        kind = "gameover" if self.player.dying else "bullet"
-                        self.explosions.append(Explosion(self.player.x, self.player.y, kind=kind))
-                        self.shake_amount = 22.0 if self.player.dying else 12.0
-                        self.sounds.play("explosion_big" if self.player.dying else "explosion")
+                    if (not ship.is_phenix) and ship.invulnerable <= 0 and ship.alive and not ship.dying:
+                        ship.hit()
+                        if self.play_mode == "coop":
+                            self._on_coop_life_lost(ship)
+                        kind = "gameover" if ship.dying else "bullet"
+                        self.explosions.append(Explosion(ship.x, ship.y, kind=kind))
+                        self.shake_amount = 22.0 if ship.dying else 12.0
+                        self.sounds.play("explosion_big" if ship.dying else "explosion")
                     break
-            
             for enemy in self.formation.get_hittable_enemies():
                 if enemy.diving and enemy.get_hitbox().colliderect(player_hitbox):
                     enemy.kill()
                     self.explosions.append(Explosion(enemy.x, enemy.y, kind="collision"))
                     self.sounds.play("enemy_explosion")
-                    if self.player.is_phenix:
-                        # Phenix: destroy the diver, no player damage
+                    if ship.is_phenix:
                         self.shake_amount = max(self.shake_amount, 8.0)
                     else:
-                        self.player.hit()
-                        pkind = "gameover" if self.player.dying else "collision"
-                        self.explosions.append(Explosion(self.player.x, self.player.y, kind=pkind))
-                        self.shake_amount = 26.0 if self.player.dying else 18.0
+                        ship.hit()
+                        if self.play_mode == "coop":
+                            self._on_coop_life_lost(ship)
+                        pkind = "gameover" if ship.dying else "collision"
+                        self.explosions.append(Explosion(ship.x, ship.y, kind=pkind))
+                        self.shake_amount = 26.0 if ship.dying else 18.0
                         self.sounds.play("explosion_big")
                     break
-        
+
         for exp in self.explosions[:]:
             exp.update(self.dt)
             if exp.is_finished():
                 self.explosions.remove(exp)
+        if self.tesla_fx is not None:
+            self.tesla_fx.update(self.dt)
+            if self.tesla_fx.is_finished():
+                self.tesla_fx = None
+                self.sounds.play_electric(False)
         
         # Soft performance cap: keep newest explosions only
         if len(self.explosions) > 24:
@@ -2563,9 +3123,22 @@ class Game:
         if self.shake_amount > 0:
             self.shake_amount = max(0.0, self.shake_amount - SCREEN_SHAKE_DECAY * self.dt)
 
+        # Life lost mid-frame (enemy bullet / dive) — hold, then hand off
+        if (self.hotseat and not self.attract_mode and not self.game_over
+                and not self.hotseat_wait and self.hotseat_hold <= 0
+                and self.stage_transition is None
+                and getattr(self.player, "just_lost_life", False)
+                and self.player.alive and not self.player.dying):
+            self._hotseat_arm_hold("switch", self.HOTSEAT_HOLD_LIFE)
+
     # --- Render (logical canvas, then present) ---
     def _ensure_scanline_surf(self):
-        """Cached CRT scanline overlay. Levels 1–3 (stronger / denser)."""
+        """Cached CRT multiply overlay (opaque RGB). Levels 1–3.
+
+        Black-alpha-over dest = dest * (1 - a/255). We bake that factor
+        as a white/grey RGB map and blit with BLEND_RGB_MULT — same look,
+        no per-pixel alpha read on the 1280×720 hot path.
+        """
         level = int(getattr(self, "scanlines", 0) or 0)
         if level <= 0:
             return None
@@ -2575,32 +3148,43 @@ class Game:
         ):
             return self._scanline_surf
 
-        surf = pygame.Surface((BASE_WIDTH, BASE_HEIGHT), pygame.SRCALPHA)
-        if level == 1:
-            # Soft classic: every other line, light alpha
-            for y in range(0, BASE_HEIGHT, 2):
-                pygame.draw.line(surf, (0, 0, 0, 55), (0, y), (BASE_WIDTH, y))
-        elif level == 2:
-            # Stronger alpha + slight double thickness feel
-            for y in range(0, BASE_HEIGHT, 2):
-                pygame.draw.line(surf, (0, 0, 0, 95), (0, y), (BASE_WIDTH, y))
-            for y in range(1, BASE_HEIGHT, 4):
-                pygame.draw.line(surf, (0, 0, 0, 35), (0, y), (BASE_WIDTH, y))
-        else:
-            # Level 3: heavy CRT — dense + darker
-            for y in range(0, BASE_HEIGHT, 2):
-                pygame.draw.line(surf, (0, 0, 0, 130), (0, y), (BASE_WIDTH, y))
-            for y in range(1, BASE_HEIGHT, 2):
-                pygame.draw.line(surf, (0, 0, 0, 45), (0, y), (BASE_WIDTH, y))
-            # Very subtle vignette-ish top/bottom weight
-            for y in list(range(0, 8)) + list(range(BASE_HEIGHT - 8, BASE_HEIGHT)):
-                a = 25 if y % 2 == 0 else 15
-                pygame.draw.line(surf, (0, 0, 0, a), (0, y), (BASE_WIDTH, y))
-
+        w, h = BASE_WIDTH, BASE_HEIGHT
         try:
-            surf = surf.convert_alpha()
+            if getattr(self, "game_surface", None) is not None:
+                surf = pygame.Surface((w, h), 0, self.game_surface)
+            else:
+                surf = pygame.Surface((w, h)).convert()
         except Exception:
-            pass
+            surf = pygame.Surface((w, h))
+        surf.fill((255, 255, 255))
+
+        def _shade(alpha):
+            v = max(0, 255 - int(alpha))
+            return (v, v, v)
+
+        if level == 1:
+            row = _shade(55)
+            for y in range(0, h, 2):
+                surf.fill(row, (0, y, w, 1))
+        elif level == 2:
+            even = _shade(95)
+            mid = _shade(35)
+            for y in range(0, h, 2):
+                surf.fill(even, (0, y, w, 1))
+            for y in range(1, h, 4):
+                surf.fill(mid, (0, y, w, 1))
+        else:
+            even = _shade(130)
+            odd = _shade(45)
+            for y in range(0, h, 2):
+                surf.fill(even, (0, y, w, 1))
+            for y in range(1, h, 2):
+                surf.fill(odd, (0, y, w, 1))
+            for y in list(range(0, 8)) + list(range(h - 8, h)):
+                extra = 25 if y % 2 == 0 else 15
+                base = 130 if y % 2 == 0 else 45
+                surf.fill(_shade(base + extra), (0, y, w, 1))
+
         self._scanline_surf = surf
         self._scanline_level_cached = level
         return surf
@@ -2624,14 +3208,37 @@ class Game:
             
             for exp in self.explosions:
                 exp.draw(self.game_surface)
+            if self.tesla_fx is not None:
+                self.tesla_fx.draw(self.game_surface)
             
-            self.player.draw(self.game_surface)
+            for ship in self._ships():
+                ship.draw(self.game_surface)
             
             # UI (cached text — re-render only when string/color changes)
             tc = self.text_cache
-            score_surf = tc.get(self.font, self.format_score(self.score), (110, 255, 150))
-            self.game_surface.blit(score_surf, (BASE_WIDTH // 2 - score_surf.get_width() // 2, 16))
-            self._draw_phenix_gauge()
+            if self.play_mode == "coop" and self.player2:
+                p1s = tc.get(self.font, f"P1 {self.format_score(getattr(self.player, 'score', 0))}", (110, 255, 150))
+                p2s = tc.get(self.font, f"P2 {self.format_score(getattr(self.player2, 'score', 0))}", (120, 180, 255))
+                self.game_surface.blit(p1s, (16, 16))
+                self.game_surface.blit(p2s, (BASE_WIDTH - 16 - p2s.get_width(), 16))
+                self._draw_phenix_gauge(self.player, 18, 100)
+                self._draw_phenix_gauge(self.player2, BASE_WIDTH - 18 - 14, 100, align="right")
+            else:
+                score_surf = tc.get(self.font, self.format_score(self.score), (110, 255, 150))
+                self.game_surface.blit(score_surf, (BASE_WIDTH // 2 - score_surf.get_width() // 2, 16))
+                if self.hotseat and self.slots[0] and self.slots[1]:
+                    s0 = self.slots[0]["score"] if self.current_p != 0 else self.score
+                    s1 = self.slots[1]["score"] if self.current_p != 1 else self.score
+                    c0 = (255, 230, 120) if self.current_p == 0 else (140, 140, 170)
+                    c1 = (255, 230, 120) if self.current_p == 1 else (140, 140, 170)
+                    hp1 = tc.get(self.font, f"P1 {self.format_score(s0)}", c0)
+                    hp2 = tc.get(self.font, f"P2 {self.format_score(s1)}", c1)
+                    self.game_surface.blit(hp1, (16, 44))
+                    self.game_surface.blit(hp2, (BASE_WIDTH - 16 - hp2.get_width(), 44))
+                if self.hotseat and self.current_p == 1:
+                    self._draw_phenix_gauge(self.player, BASE_WIDTH - 18 - 14, 100, align="right")
+                else:
+                    self._draw_phenix_gauge(self.player, 18, 100)
             if self.attract_mode:
                 demo = tc.get(self.medium_font, t("demo"), (255, 180, 80))
                 self.game_surface.blit(demo, (BASE_WIDTH // 2 - demo.get_width() // 2, 72))
@@ -2642,13 +3249,14 @@ class Game:
                 self.game_surface.blit(ch, (BASE_WIDTH // 2 - ch.get_width() // 2, 74))
             
             stage_surf = tc.get(self.font, f"{t('stage')} {self.stage}", (180, 180, 220))
-            self.game_surface.blit(stage_surf, (16, 16))
+            stage_x = BASE_WIDTH // 2 - stage_surf.get_width() // 2 if self.play_mode == "coop" else 16
+            self.game_surface.blit(stage_surf, (stage_x, 16))
             # Flags for each boss defeated — at 10+, one big flag only
             if self.bosses_defeated >= 10:
-                fx = 16 + stage_surf.get_width() + 12
+                fx = stage_x + stage_surf.get_width() + 12
                 self._draw_boss_flag(self.game_surface, fx, 12, big=True)
             elif self.bosses_defeated > 0:
-                fx = 16 + stage_surf.get_width() + 10
+                fx = stage_x + stage_surf.get_width() + 10
                 fy = 18
                 for i in range(self.bosses_defeated):
                     self._draw_boss_flag(self.game_surface, fx + i * 18, fy, big=False)
@@ -2717,8 +3325,11 @@ class Game:
             elif self.menu_screen == "main":
                 diff_key = {"novice": "diff_novice", "normal": "diff_normal", "veteran": "diff_veteran"}.get(self.difficulty, "diff_normal")
                 diff = t(diff_key)
+                mode = getattr(self, "play_mode", "solo")
+                mode_key = {"solo": "mode_solo", "hotseat": "mode_hotseat", "coop": "mode_coop"}.get(mode, "mode_solo")
                 options = [
                     t("play"),
+                    f"{t('mode')} :  <  {t(mode_key)}  >",
                     f"{t('difficulty')} :  <  {diff}  >",
                     t("options"),
                     t("high_scores"),
@@ -2756,6 +3367,7 @@ class Game:
                             self.game_surface, base_y + i * 28, rank,
                             entries[i]["name"], entries[i]["score"],
                             (200, 200, 230), score_right,
+                            coop=bool(entries[i].get("coop")),
                         )
                     else:
                         self._draw_hs_row(
@@ -2880,6 +3492,11 @@ class Game:
             if self.hs_phase == "enter":
                 title = self.big_font.render(t("new_record"), True, (255, 220, 100))
                 self.game_surface.blit(title, (BASE_WIDTH // 2 - title.get_width() // 2, 100))
+                if self.hotseat:
+                    who = self.font.render(
+                        t("player_n").format(n=self.hs_slot_label), True, (255, 200, 120)
+                    )
+                    self.game_surface.blit(who, (BASE_WIDTH // 2 - who.get_width() // 2, 72))
                 
                 sc = self.font.render(f"{t('score_label')} : {self.format_score(self.score)}", True, (200, 255, 180))
                 self.game_surface.blit(sc, (BASE_WIDTH // 2 - sc.get_width() // 2, 180))
@@ -2929,6 +3546,7 @@ class Game:
                         self._draw_hs_row(
                             self.game_surface, base_y + i * 28, rank,
                             name, score, col, score_right,
+                            coop=bool(entries[i].get("coop")),
                         )
                     else:
                         self._draw_hs_row(
@@ -2938,6 +3556,16 @@ class Game:
                 
                 restart = self.font.render(t("back_to_menu"), True, (255, 220, 100))
                 self.game_surface.blit(restart, (BASE_WIDTH // 2 - restart.get_width() // 2, BASE_HEIGHT - 50))
+
+        if self.hotseat_wait and self.started and not self.game_over:
+            overlay = pygame.Surface((BASE_WIDTH, BASE_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 170))
+            self.game_surface.blit(overlay, (0, 0))
+            who = t("player_n").format(n=self.hotseat_next + 1)
+            title = self.big_font.render(who, True, (255, 200, 80))
+            self.game_surface.blit(title, (BASE_WIDTH // 2 - title.get_width() // 2, BASE_HEIGHT // 2 - 50))
+            hint = self.font.render(t("hotseat_press"), True, (220, 220, 240))
+            self.game_surface.blit(hint, (BASE_WIDTH // 2 - hint.get_width() // 2, BASE_HEIGHT // 2 + 24))
         
         self.screen.fill((0, 0, 0))
 
@@ -3016,11 +3644,11 @@ class Game:
             )
             self.game_surface.blit(fps_surf, (BASE_WIDTH - fps_surf.get_width() - 16, 12))
 
-        # CRT scanlines (logical resolution, then scaled with the game)
+        # CRT scanlines — multiply, same format as game_surface (no alpha blit)
         if int(getattr(self, "scanlines", 0) or 0) > 0:
             sc = self._ensure_scanline_surf()
             if sc is not None:
-                self.game_surface.blit(sc, (0, 0))
+                self.game_surface.blit(sc, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
         
         # Present — scale game only when needed; bezel art is cached
         mode = getattr(self, "display_mode", "window")
@@ -3034,27 +3662,32 @@ class Game:
 
         if mode == "window" and scr_size == (BASE_WIDTH, BASE_HEIGHT):
             self.screen.blit(self.game_surface, (shake_x, shake_y))
-        else:
-            if self.bezel_active:
-                # Only clear the game band if needed; bezels cover the sides
-                self.screen.fill((0, 0, 0), vr)
-                self._draw_arcade_bezels()
+        elif self.bezel_active and vr.width > 0 and vr.height > 0:
+            self._ensure_bezel_cache()
+            # Opaque cached panels (display format) — cheap side blits
+            if self._bezel_blit_left is not None:
+                self.screen.blit(self._bezel_blit_left, (0, 0))
+            if self._bezel_blit_right is not None:
+                self.screen.blit(self._bezel_blit_right, (vr.right, 0))
+            # Scale the game straight into the center (no fill, no extra buffer blit)
+            # when there is no screen-shake. Shake uses a temp dest.
+            dest_x, dest_y = vr.x + shake_x, vr.y + shake_y
+            if shake_x == 0 and shake_y == 0 and vr.width > 0:
+                try:
+                    dest = self.screen.subsurface(vr)
+                    if vr.width == BASE_WIDTH and vr.height == BASE_HEIGHT:
+                        dest.blit(self.game_surface, (0, 0))
+                    else:
+                        pygame.transform.scale(self.game_surface, (vr.width, vr.height), dest)
+                except Exception:
+                    self._present_game_scaled(vr, dest_x, dest_y)
             else:
-                self.screen.fill((0, 0, 0))
+                self.screen.fill((0, 0, 0), vr)
+                self._present_game_scaled(vr, dest_x, dest_y)
+        else:
+            self.screen.fill((0, 0, 0))
             if vr.width > 0 and vr.height > 0:
-                if vr.width == BASE_WIDTH and vr.height == BASE_HEIGHT:
-                    self.screen.blit(self.game_surface, (vr.x + shake_x, vr.y + shake_y))
-                else:
-                    key = (vr.width, vr.height)
-                    buf = getattr(self, "_scaled_game_buf", None)
-                    if buf is None or buf.get_size() != key:
-                        try:
-                            self._scaled_game_buf = pygame.Surface(key).convert()
-                        except Exception:
-                            self._scaled_game_buf = pygame.Surface(key)
-                        buf = self._scaled_game_buf
-                    pygame.transform.scale(self.game_surface, key, buf)
-                    self.screen.blit(buf, (vr.x + shake_x, vr.y + shake_y))
+                self._present_game_scaled(vr, vr.x + shake_x, vr.y + shake_y)
         pygame.display.flip()
 
     # --- Main loop ---

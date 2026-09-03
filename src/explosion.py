@@ -228,13 +228,17 @@ class Explosion:
         
         for p in self.particles:
             size = p["size"] * alpha
-            if size < 0.5:
+            if size < 0.6:
                 continue
             px = int(self.x + p["x"])
             py = int(self.y + p["y"])
             c = p["color"]
             col = (int(c[0] * alpha), int(c[1] * alpha), int(c[2] * alpha))
-            pygame.draw.circle(surface, col, (px, py), max(1, int(size)))
+            r = max(1, int(size))
+            if r <= 2:
+                surface.fill(col, (px - r, py - r, r * 2, r * 2))
+            else:
+                pygame.draw.circle(surface, col, (px, py), r)
         
         for s in self.sparks:
             if s["life"] <= 0:
@@ -263,3 +267,90 @@ class Explosion:
                 ry = cx * sin_a + cy * cos_a
                 points.append((px + rx, py + ry))
             pygame.draw.polygon(surface, col, points)
+
+
+class TeslaCoilFx:
+    """Lightning climbing a screen edge after an edge-kill (Tesla coil look)."""
+
+    def __init__(self, side, origin_y):
+        from settings import BASE_WIDTH, BASE_HEIGHT
+        self.side = -1 if side < 0 else 1
+        self.origin_y = float(origin_y)
+        self.t = 0.0
+        self.duration = 1.85
+        self.w = BASE_WIDTH
+        self.h = BASE_HEIGHT
+        self.x = 7 if self.side < 0 else BASE_WIDTH - 7
+        self._glow = None
+
+    def update(self, dt):
+        self.t += dt
+
+    def is_finished(self):
+        return self.t >= self.duration
+
+    def _bolt(self, y0, y1, fork=True):
+        pts = []
+        n = max(5, int(abs(y1 - y0) / 28))
+        for i in range(n + 1):
+            tt = i / max(1, n)
+            y = y0 + (y1 - y0) * tt
+            jag = random.uniform(-7, 7) + math.sin(tt * 9 + self.t * 18) * 3
+            pts.append((self.x + jag, y))
+        return pts
+
+    def draw(self, surface):
+        if self.is_finished():
+            return
+        life = 1.0 - self.t / self.duration
+        climb = min(1.0, self.t / 0.72)
+        top = self.h * (1.0 - climb) - 20
+        top = max(-10, top)
+        fade = life * life
+
+        # Glow column (reuse surface — no alloc each frame)
+        glow_w = int(18 + 22 * fade)
+        gw, gh = glow_w * 2, self.h
+        glow = self._glow
+        if glow is None or glow.get_size()[1] != gh or glow.get_width() < gw:
+            glow = pygame.Surface((max(gw, 80), gh), pygame.SRCALPHA)
+            self._glow = glow
+        glow.fill((0, 0, 0, 0))
+        col_a = int(70 * fade)
+        pygame.draw.rect(glow, (80, 170, 255, col_a), (glow_w - 6, int(top), 12, int(self.h - top + 8)))
+        pygame.draw.rect(glow, (180, 230, 255, int(40 * fade)), (glow_w - 3, int(top), 6, int(self.h - top + 8)))
+        surface.blit(glow, (self.x - glow_w, 0), special_flags=pygame.BLEND_ADD)
+
+        # Main rising bolt + satellites
+        bolts = 4 if climb < 1 else 3
+        for b in range(bolts):
+            y0 = self.h + 8
+            y1 = top + random.uniform(-12, 18)
+            pts = self._bolt(y0, y1)
+            if len(pts) < 2:
+                continue
+            core = (220, 245, 255) if b == 0 else (90, 170, 255)
+            pygame.draw.lines(surface, core, False, pts, 3 if b == 0 else 1)
+            if b == 0:
+                pygame.draw.lines(surface, (255, 255, 255), False, pts, 1)
+            # Side forks near the climbing tip
+            if random.random() < 0.55:
+                mid = pts[len(pts) // 2]
+                fx = mid[0] + self.side * random.uniform(12, 42)
+                fy = mid[1] + random.uniform(-18, 8)
+                pygame.draw.line(surface, (160, 210, 255), mid, (fx, fy), 1)
+
+        # Bright tip spark climbing
+        tip_y = top
+        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(tip_y)), int(5 + 4 * fade))
+        pygame.draw.circle(surface, (140, 200, 255), (int(self.x), int(tip_y)), int(10 + 6 * fade), 1)
+
+        # Residual crackles at ship height
+        for _ in range(3):
+            y = self.origin_y + random.uniform(-30, 30)
+            x2 = self.x + self.side * random.uniform(8, 36)
+            pygame.draw.line(
+                surface, (180, 230, 255),
+                (self.x + random.uniform(-4, 4), y),
+                (x2, y + random.uniform(-16, 16)), 1,
+            )
