@@ -67,13 +67,17 @@ class TouchControls:
         return 0.0
 
     def screen_to_canvas(self, sx, sy, view_rect):
+        # pygbag / fenetre 1280x720 : event.pos est deja en canvas
         if view_rect is None or view_rect.width <= 0 or view_rect.height <= 0:
+            return sx, sy
+        if (view_rect.x == 0 and view_rect.y == 0
+                and view_rect.width == self.w and view_rect.height == self.h):
             return sx, sy
         x = (sx - view_rect.x) * self.w / float(view_rect.width)
         y = (sy - view_rect.y) * self.h / float(view_rect.height)
         return x, y
 
-    def handle_event(self, event, view_rect):
+    def handle_event(self, event, view_rect, hide_buttons=False):
         et = event.type
         finger_down = getattr(pygame, "FINGERDOWN", -10)
         finger_up = getattr(pygame, "FINGERUP", -11)
@@ -101,7 +105,7 @@ class TouchControls:
             pid = ("m", 0)
 
         x, y = self.screen_to_canvas(sx, sy, view_rect)
-        zone = self._hit_button(x, y)
+        zone = None if hide_buttons else self._hit_button(x, y)
 
         if down:
             if zone is None:
@@ -114,8 +118,17 @@ class TouchControls:
             self._holds[pid] = zone
             if zone == "pad":
                 self._pad_x = x
+            if zone == "fire":
+                self._fire_pulse = True
             return True
         if up:
+            # pygbag rate parfois le hit-test UP : on lache tout pointer souris
+            if pid[0] == "m":
+                self._pad_x = None
+                for k in list(self._holds):
+                    if k[0] == "m":
+                        del self._holds[k]
+                return True
             if pid in self._holds:
                 if self._holds[pid] == "pad":
                     self._pad_x = None
@@ -130,7 +143,8 @@ class TouchControls:
 
     def finalize(self, view_rect):
         dx = 0.0
-        fire = False
+        fire = bool(getattr(self, "_fire_pulse", False))
+        self._fire_pulse = False
         phenix_held = False
         pause_held = False
 

@@ -114,11 +114,17 @@ class Game:
                 self.display_mode = early.get("display_mode", "fullscreen") or "fullscreen"
                 if self.display_mode not in ("window", "fullscreen", "borderless"):
                     self.display_mode = "fullscreen"
+                try:
+                    from platform_io import is_web
+                    if is_web():
+                        self.display_mode = "window"
+                except Exception:
+                    pass
                 self.bezel_style = "off"
             except Exception:
                 self.monitor_index = 0
-                self.display_mode = "fullscreen"
-                self.bezel_style = "phoenix"
+                self.display_mode = "window"
+                self.bezel_style = "off"
             self.clock = pygame.time.Clock()
             self.view_rect = pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT)
             self.bezel_active = False
@@ -1008,8 +1014,48 @@ class Game:
         else:
             self.hs_phase = "table"
 
+    HS_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+    def _hs_touch_rows(self):
+        """Grille tactile initiales : slots, fleches, A-Z/0-9, Valider."""
+        rows = []
+        letter_spacing = 90
+        start_x = BASE_WIDTH // 2 - letter_spacing
+        for i in range(3):
+            rx = start_x + i * letter_spacing - 36
+            rows.append((pygame.Rect(rx, 300, 72, 110), i, "hs_slot"))
+        rows.append((pygame.Rect(BASE_WIDTH // 2 - 200, 300, 70, 50), 1, "hs_up"))
+        rows.append((pygame.Rect(BASE_WIDTH // 2 + 130, 300, 70, 50), -1, "hs_down"))
+        # 12 colonnes x 3 lignes
+        alpha = self.HS_ALPHABET
+        cols = 12
+        cell_w, cell_h = 88, 46
+        grid_w = cols * cell_w
+        gx = (BASE_WIDTH - grid_w) // 2
+        gy = 430
+        for i, ch in enumerate(alpha):
+            c, r = i % cols, i // cols
+            rows.append((pygame.Rect(gx + c * cell_w + 4, gy + r * cell_h + 4, cell_w - 8, cell_h - 8), i, "hs_key"))
+        rows.append((pygame.Rect(BASE_WIDTH // 2 - 110, 580, 220, 52), 0, "hs_ok"))
+        return rows
+
+    def _hs_on_touch(self, idx, kind):
+        if kind == "hs_slot":
+            self.hs_char_index = int(idx) % 3
+        elif kind == "hs_up":
+            self._hs_cycle_letter(1)
+        elif kind == "hs_down":
+            self._hs_cycle_letter(-1)
+        elif kind == "hs_key":
+            alpha = self.HS_ALPHABET
+            self.hs_name[self.hs_char_index] = alpha[int(idx) % len(alpha)]
+            if self.hs_char_index < 2:
+                self.hs_char_index += 1
+        elif kind == "hs_ok":
+            self._submit_highscore()
+
     def _hs_cycle_letter(self, direction):
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        alphabet = self.HS_ALPHABET
         cur = self.hs_name[self.hs_char_index]
         idx = alphabet.find(cur)
         if idx < 0:
@@ -1339,6 +1385,24 @@ class Game:
             print("pick monitor failed:", e)
             mon_i, mon_w, mon_h, mon_x, mon_y = 0, BASE_WIDTH, BASE_HEIGHT, 0, 0
 
+        try:
+            from platform_io import is_web
+            if is_web():
+                print("[Phenix] web set_mode 1280x720 force", flush=True)
+                # Ne PAS reutiliser le canvas pygbag (souvent plus petit → coupe bas/droite).
+                self.screen = pygame.display.set_mode((BASE_WIDTH, BASE_HEIGHT))
+                self.display_mode = "window"
+                self.bezel_active = False
+                self.view_rect = pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT)
+                try:
+                    if getattr(self, "game_surface", None) is None:
+                        self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT))
+                except Exception:
+                    pass
+                return
+        except Exception as e:
+            print("[Phenix] web display fallback", e, flush=True)
+
         base_flags = pygame.DOUBLEBUF | pygame.HWSURFACE
         mode = getattr(self, "display_mode", "fullscreen")
 
@@ -1399,6 +1463,13 @@ class Game:
             pass
 
     def apply_display_mode(self):
+        try:
+            from platform_io import is_web
+            if is_web():
+                self.display_mode = "window"
+                return
+        except Exception:
+            pass
         """Apply window/fullscreen/borderless from Options (safe recreate)."""
         try:
             self._prepare_monitor_env()
@@ -1506,7 +1577,7 @@ class Game:
     def _menu_nav(self, direction):
         """direction: -1 up, +1 down"""
         if self.menu_screen == "main":
-            n = 6  # Jouer, Difficulte, Options, High Scores, Credits, Quitter
+            n = 5 if self._is_web_runtime() else 6  # sans Quitter sur le web
         elif self.menu_screen == "reset_confirm":
             n = 2  # Oui, Non
         else:
@@ -1551,12 +1622,34 @@ class Game:
         }
         return [mapping[k] for k in self._options_spec() if k in mapping]
 
+    def _option_touch_rows(self, lines, base_y, spacing):
+        rows = []
+        cycle_keys = ("control", "autofire", "sfx", "music", "rumble", "display", "bezel", "fps", "scanlines", "language")
+        spec = self._options_spec()
+        for i, label in enumerate(lines):
+            key = spec[i] if i < len(spec) else "back"
+            y = base_y + i * spacing
+            x, w = 180, BASE_WIDTH - 360
+            if key in cycle_keys:
+                rows.append((pygame.Rect(x, y - 4, w // 2, 40), i, "cycle_left"))
+                rows.append((pygame.Rect(x + w // 2, y - 4, w - w // 2, 40), i, "cycle_right"))
+            else:
+                rows.append((pygame.Rect(x, y - 4, w, 40), i, "confirm"))
+        return rows
+
     def _options_spec(self):
         """Ordered option ids (bezel / monitor only when relevant)."""
-        items = ["control", "autofire", "sfx", "music", "rumble", "display"]
-        mode = getattr(self, "display_mode", "fullscreen")
-        if mode == "fullscreen":
-            items.append("bezel")
+        web = False
+        try:
+            from platform_io import is_web
+            web = is_web()
+        except Exception:
+            web = False
+        items = ["control", "autofire", "sfx", "music", "rumble"]
+        if not web:
+            items.append("display")
+            if getattr(self, "display_mode", "fullscreen") == "fullscreen":
+                items.append("bezel")
         items.extend(["fps", "scanlines", "language", "reset_hs", "back"])
         return items
 
@@ -2101,6 +2194,22 @@ class Game:
         except Exception:
             pass
 
+    def _is_web_runtime(self):
+        try:
+            from platform_io import is_web
+            return is_web()
+        except Exception:
+            return False
+
+    def _request_app_quit(self):
+        """Quitter l'appli. Sur le web pygame.quit() gele le canvas : on reste au menu."""
+        if self._is_web_runtime():
+            self.quit_confirm = False
+            self.menu_screen = "main"
+            self.menu_index = 0
+            return
+        self.running = False
+
     def _quit_to_menu(self):
         """Leave current run, return to main menu (keep settings)."""
         saved = (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
@@ -2168,7 +2277,7 @@ class Game:
                 self.credits_scroll = float(BASE_HEIGHT)
                 self.menu_index = 0
             elif self.menu_index == 5:
-                self.running = False
+                self._request_app_quit()
         elif self.menu_screen == "reset_confirm":
             if self.menu_index == 0:  # Oui
                 self.hs_entries = reset_highscores()
@@ -2213,6 +2322,13 @@ class Game:
             return "menu"
         return "game"
 
+    def _touch_hud_visible(self):
+        if not getattr(self, "touch_enabled", False):
+            return False
+        if getattr(self, "input_mode", "") == "gamepad" and getattr(self, "gamepad_detected", False):
+            return False
+        return True
+
     def _apply_touch_ui(self):
         """FIRE = valider, II = retour, tap ligne = action. Une seule finalize/frame."""
         if not getattr(self, "touch_enabled", False) or not hasattr(self, "touch"):
@@ -2224,11 +2340,32 @@ class Game:
         if getattr(self, "input_grace", 0) > 0 or self.attract_mode:
             return ts
 
-        if ts.menu_pick is not None and not self.started and not self.game_over and not self.quit_confirm:
+        if ts.menu_pick is not None and self.game_over and self.hs_phase == "enter":
+            self._hs_on_touch(int(ts.menu_pick), ts.menu_kind or "")
+            return ts
+
+        if ts.menu_pick is not None and self.paused and self.started and not self.game_over and not getattr(self, "pause_options", False):
+            self.pause_index = int(ts.menu_pick)
+            if self.pause_index == 0:
+                self.paused = False
+            elif self.pause_index == 1:
+                self.pause_options = True
+                self.menu_screen = "options"
+                self.menu_index = 0
+            else:
+                self._quit_to_menu()
+            return ts
+
+        if ts.menu_pick is not None and (
+            (not self.started and not self.game_over and not self.quit_confirm)
+            or (self.paused and getattr(self, "pause_options", False))
+        ):
             self._reset_menu_idle()
             kind = ts.menu_kind or "confirm"
             self.menu_index = int(ts.menu_pick)
-            if kind == "cycle":
+            if kind == "cycle_left":
+                self._menu_adjust(-1)
+            elif kind in ("cycle", "cycle_right"):
                 self._menu_adjust(1)
             else:
                 self._menu_confirm()
@@ -2238,11 +2375,14 @@ class Game:
             self._reset_menu_idle()
             if self.quit_confirm and not self.started:
                 if self.quit_index == 0:
-                    self.running = False
+                    self._request_app_quit()
                 else:
                     self.quit_confirm = False
             elif self.game_over and self.hs_phase == "enter":
-                self._submit_highscore()
+                if self.hs_char_index < 2:
+                    self.hs_char_index += 1
+                else:
+                    self._submit_highscore()
             elif self.game_over and self.hs_phase == "table":
                 saved = (
                     self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
@@ -2360,8 +2500,17 @@ class Game:
 
     def handle_events(self):
         for event in pygame.event.get():
+            if event.type in (
+                pygame.MOUSEBUTTONDOWN, pygame.KEYDOWN,
+                getattr(pygame, "FINGERDOWN", -1),
+                getattr(pygame, "FINGERMOTION", -2),
+            ):
+                try:
+                    self.sounds.unlock_audio()
+                except Exception:
+                    pass
             if event.type == pygame.QUIT:
-                self.running = False
+                self._request_app_quit()
             elif self._is_app_background_event(event):
                 self._on_app_background()
                 continue
@@ -2370,7 +2519,8 @@ class Game:
                 continue
             if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
                 vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
-                if self.touch.handle_event(event, vr):
+                hide_btns = not self._touch_hud_visible()
+                if self.touch.handle_event(event, vr, hide_buttons=hide_btns):
                     continue
             if event.type in (getattr(pygame, "JOYDEVICEADDED", -1), getattr(pygame, "JOYDEVICEREMOVED", -2)):
                 self._poll_gamepad()
@@ -2474,7 +2624,7 @@ class Game:
                         self.quit_index = (self.quit_index + 1) % 2
                     elif self._is_menu_confirm(event.key):
                         if self.quit_index == 0:
-                            self.running = False
+                            self._request_app_quit()
                         else:
                             self.quit_confirm = False
 
@@ -2641,7 +2791,7 @@ class Game:
                 elif self.quit_confirm and not self.started:
                     if event.button == 0:
                         if self.quit_index == 0:
-                            self.running = False
+                            self._request_app_quit()
                         else:
                             self.quit_confirm = False
                     elif event.button == 1:
@@ -2915,9 +3065,11 @@ class Game:
             elif getattr(self, "touch_enabled", False):
                 ts = getattr(self, "_ts", None)
                 if ts is not None and not self.paused:
-                    if ts.active or ts.fire or ts.dx != 0.0:
+                    # FIRE ne doit PAS forcer dx=0 (sinon plus de deplacement).
+                    if ts.dx != 0.0:
                         ai_move = ts.dx
-                        ai_shoot = ts.fire
+                    if ts.fire:
+                        ai_shoot = True
                     if ts.phenix:
                         self._activate_phenix_from_input(self.player)
             for ship in self._ships():
@@ -2931,17 +3083,11 @@ class Game:
                     scheme = getattr(ship, "input_scheme", "solo")
                     joy = getattr(ship, "_joy", None)
                     mode = "gamepad" if scheme == "pad" else "keyboard"
-                if self.attract_mode and ship is self.player:
-                    edge_killed = ship.update(
-                        self.dt, keys, mode, joy,
-                        allow_shoot=(self.input_grace <= 0),
-                        ai_move=ai_move, ai_shoot=ai_shoot,
-                    )
-                else:
-                    edge_killed = ship.update(
-                        self.dt, keys, mode, joy,
-                        allow_shoot=(self.input_grace <= 0),
-                    )
+                edge_killed = ship.update(
+                    self.dt, keys, mode, joy,
+                    allow_shoot=(self.input_grace <= 0),
+                    ai_move=ai_move, ai_shoot=ai_shoot,
+                )
                 if edge_killed:
                     edge_killed_any = True
                     kind = "gameover" if ship.dying else "edge"
@@ -3487,8 +3633,9 @@ class Game:
                     (t("options"), "confirm"),
                     (t("high_scores"), "confirm"),
                     (t("credits"), "confirm"),
-                    (t("quit"), "confirm"),
                 ]
+                if not self._is_web_runtime():
+                    options.append((t("quit"), "confirm"))
                 logo_h = self.logo_frames[0].get_height() if self.logo_frames else 100
                 base_y = max(300, 12 + logo_h + 48)
                 spacing = 38 if base_y + 5 * 38 < BASE_HEIGHT - 110 else 34
@@ -3620,6 +3767,8 @@ class Game:
                     prefix = "> " if selected else "  "
                     surf = self.medium_font.render(prefix + label, True, col)
                     self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, base_y + i * 42))
+                if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                    self.touch.set_menu_rows(self._option_touch_rows(lines, base_y, 42))
                 
                 hint = self.font.render(t("opt_hint"), True, (120, 120, 150))
                 self.game_surface.blit(hint, (BASE_WIDTH // 2 - hint.get_width() // 2, BASE_HEIGHT - 70))
@@ -3681,8 +3830,24 @@ class Game:
                     True, (140, 140, 180)
                 )
                 self.game_surface.blit(controls, (BASE_WIDTH // 2 - controls.get_width() // 2, 480))
-                ok = self.font.render(t("press_confirm"), True, (255, 220, 100))
-                self.game_surface.blit(ok, (BASE_WIDTH // 2 - ok.get_width() // 2, 540))
+                # Grille A-Z / 0-9
+                alpha = self.HS_ALPHABET
+                cols = 12
+                cell_w, cell_h = 88, 46
+                grid_w = cols * cell_w
+                gx = (BASE_WIDTH - grid_w) // 2
+                gy = 430
+                mini = pygame.font.Font(None, 28)
+                for i, ch in enumerate(alpha):
+                    c, r = i % cols, i // cols
+                    rx, ry = gx + c * cell_w + 4, gy + r * cell_h + 4
+                    pygame.draw.rect(self.game_surface, (40, 40, 70), (rx, ry, cell_w - 8, cell_h - 8), border_radius=6)
+                    pygame.draw.rect(self.game_surface, (120, 120, 180), (rx, ry, cell_w - 8, cell_h - 8), 1, border_radius=6)
+                    glyph = mini.render(ch, True, (230, 230, 255))
+                    self.game_surface.blit(glyph, (rx + (cell_w - 8 - glyph.get_width()) // 2, ry + 8))
+                pygame.draw.rect(self.game_surface, (80, 140, 80), (BASE_WIDTH // 2 - 110, 580, 220, 52), border_radius=8)
+                ok = self.medium_font.render("VALIDER", True, (255, 255, 200))
+                self.game_surface.blit(ok, (BASE_WIDTH // 2 - ok.get_width() // 2, 590))
             
             elif self.hs_phase == "table":
                 title = self.big_font.render(t("high_scores"), True, (255, 120, 255))
@@ -3765,15 +3930,22 @@ class Game:
                         prefix = "> " if selected else "  "
                         surf = self.medium_font.render(prefix + label, True, col)
                         self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, base_y + i * 42))
+                    if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                        self.touch.set_menu_rows(self._option_touch_rows(lines, base_y, 42))
             else:
                 title = self.big_font.render(t("pause"), True, (255, 220, 100))
                 self.game_surface.blit(title, (BASE_WIDTH // 2 - title.get_width() // 2, 200))
+                pause_rows = []
                 for i, label in enumerate([t("resume"), t("options"), t("quit_run")]):
                     selected = (i == self.pause_index)
                     col = (255, 230, 120) if selected else (160, 160, 190)
                     prefix = "> " if selected else "  "
                     surf = self.medium_font.render(prefix + label, True, col)
-                    self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, 300 + i * 55))
+                    y = 300 + i * 55
+                    self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, y))
+                    pause_rows.append((pygame.Rect(180, y - 4, BASE_WIDTH - 360, 50), i, "pause_item"))
+                if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                    self.touch.set_menu_rows(pause_rows)
         
         # Quit game confirm (menus)
         if self.quit_confirm and not self.started:
@@ -3796,7 +3968,10 @@ class Game:
             self._fps_timer = getattr(self, "_fps_timer", 0.0) + getattr(self, "dt", 0.016)
             if self._fps_timer >= 0.25:
                 self._fps_timer = 0.0
-                self._fps_display = int(round(self.clock.get_fps()))
+                inst = 1.0 / max(getattr(self, "_frame_dt", self.dt) or 0.016, 0.0005)
+                prev = float(getattr(self, "_fps_smooth", inst))
+                self._fps_smooth = prev * 0.7 + inst * 0.3
+                self._fps_display = int(round(self._fps_smooth))
             fps_surf = self.text_cache.get(
                 self.font, f"{getattr(self, '_fps_display', 0)} FPS", (120, 220, 120)
             )
@@ -3809,9 +3984,14 @@ class Game:
                 self.game_surface.blit(sc, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
 
         if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
-            if self.started or self.menu_screen != "main":
+            if self.game_over and self.hs_phase == "enter":
+                self.touch.set_menu_rows(self._hs_touch_rows())
+            elif self.menu_screen == "options" or getattr(self, "pause_options", False) or (self.paused and self.started):
+                pass  # rows posees au draw options / pause
+            elif self.started or self.menu_screen != "main":
                 self.touch.set_menu_rows([])
-            self.touch.draw(self.game_surface, mode=self._touch_layout_mode())
+            if self._touch_hud_visible():
+                self.touch.draw(self.game_surface, mode=self._touch_layout_mode())
         
         # Present — scale game only when needed; bezel art is cached
         mode = getattr(self, "display_mode", "window")
@@ -3854,18 +4034,33 @@ class Game:
         pygame.display.flip()
 
     # --- Main loop ---
-    def run(self):
+    async def run(self):
+        """Boucle sync-compatible pygbag : yield chaque frame (asyncio.sleep(0))."""
+        import asyncio
+        try:
+            from platform_io import is_web
+            web = is_web()
+        except Exception:
+            web = sys.platform in ("emscripten", "wasm")
+        self._last_ms = pygame.time.get_ticks()
         while self.running:
-            # Cap: menu stays at 60 (enough, less CPU on iGPU).
-            # In-game use detected refresh, but don't chase 120 if we can't hold it.
-            cap = 60
-            self.dt = self.clock.tick(cap) / 1000.0
-            # Safety clamp (spiral of death protection)
-            self.dt = min(self.dt, 0.05)
-            
+            if web:
+                now = pygame.time.get_ticks()
+                raw = (now - self._last_ms) / 1000.0
+                self._last_ms = now
+                self._frame_dt = raw if raw > 0 else 0.016
+                self.dt = min(0.05, max(0.001, self._frame_dt))
+            else:
+                self.dt = self.clock.tick(60) / 1000.0
+                self._frame_dt = self.dt
+                self.dt = min(self.dt, 0.05)
             self.handle_events()
             self.update()
             self.draw()
-            
-        pygame.quit()
-        sys.exit(0)
+            await asyncio.sleep(0)
+        if not web:
+            try:
+                pygame.quit()
+            except Exception:
+                pass
+            sys.exit(0)

@@ -63,13 +63,17 @@ class SoundManager:
                 ("phenix_activate", 0.75),
                 ("phenix_end", 0.65),
             ]:
-                self._load(name, f"{name}.wav", vol)
+                self._load(name, name, vol)
             self.enabled = len(self.sounds) > 0
             self._apply_master()
+            def _music_file(stem):
+                ogg = os.path.join(MUSIC_DIR, stem + ".ogg")
+                mp3 = os.path.join(MUSIC_DIR, stem + ".mp3")
+                return ogg if os.path.exists(ogg) else mp3
             self._music_paths = {
-                "menu": os.path.join(MUSIC_DIR, "Phenix-EternalDawn.mp3"),
-                "gameover": os.path.join(MUSIC_DIR, "Phenix-EternalDawn-Game-Over.mp3"),
-                "credits": os.path.join(MUSIC_DIR, "Phenix-LastCoin-Credits.mp3"),
+                "menu": _music_file("Phenix-EternalDawn"),
+                "gameover": _music_file("Phenix-EternalDawn-Game-Over"),
+                "credits": _music_file("Phenix-LastCoin-Credits"),
             }
             # Known lengths (seconds) when probe is unavailable
             self._music_durations = {
@@ -125,8 +129,14 @@ class SoundManager:
         return None
 
     def _load(self, name, filename, volume=0.55):
-        path = os.path.join(SOUND_DIR, filename)
-        if os.path.exists(path):
+        stem = filename[:-4] if filename.endswith((".wav", ".ogg")) else filename
+        path = None
+        for ext in (".ogg", ".wav"):
+            cand = os.path.join(SOUND_DIR, stem + ext)
+            if os.path.exists(cand):
+                path = cand
+                break
+        if path:
             snd = pygame.mixer.Sound(path)
             self.sounds[name] = snd
             self._base_volumes[name] = volume
@@ -142,11 +152,19 @@ class SoundManager:
 
     def set_music_volume(self, vol):
         self.music_volume = max(0.0, min(1.0, vol))
-        if not self._end_fading and not self._fading_out:
-            try:
-                pygame.mixer.music.set_volume(self.music_volume)
-            except Exception:
-                pass
+        try:
+            pygame.mixer.music.set_volume(self.music_volume)
+        except Exception:
+            pass
+        snd = getattr(self, "_web_music_snd", None)
+        ch = getattr(self, "_web_music_ch", None)
+        try:
+            if snd is not None:
+                snd.set_volume(self.music_volume)
+            if ch is not None:
+                ch.set_volume(self.music_volume)
+        except Exception:
+            pass
 
     def play(self, name, volume=None):
         """Play SFX. Optional volume (0..1) overrides the sample base * master for this shot."""
@@ -180,12 +198,44 @@ class SoundManager:
                 self._electric_channel.stop()
                 self._electric_channel = None
 
+    def _is_web_audio(self):
+        try:
+            from platform_io import is_web
+            if is_web():
+                return True
+        except Exception:
+            pass
+        return hasattr(__import__("sys"), "_emscripten_info")
+
+    def unlock_audio(self):
+        """First click/tap: browser autoplay policy."""
+        self._audio_unlocked = True
+        if getattr(self, "_wanted_music", None) and getattr(self, "_theme_target", None) is None:
+            self._theme_target = self._wanted_music
+        self._wanted_music = None
+
     def play_music(self, key, loops=-1):
         """Request a theme. Cross-fades from the current one if needed."""
         if key not in self._music_paths:
             return
+        if not getattr(self, "_audio_unlocked", False):
+            web = False
+            try:
+                from platform_io import is_web
+                web = is_web()
+            except Exception:
+                web = False
+            if not web:
+                web = hasattr(sys, "_emscripten_info") or "emscripten" in (sys.platform or "")
+            if web:
+                self._wanted_music = key
+                return
+            self._audio_unlocked = True
         path = self._music_paths.get(key)
         if not path or not os.path.exists(path):
+            return
+        if self._is_web_audio():
+            self._theme_target = key
             return
         # Already on this track (playing or waiting to re-loop)
         if self._current_music == key and not self._fading_out:
@@ -206,6 +256,17 @@ class SoundManager:
             return
 
         self._pending_music = key
+        if self._is_web_audio():
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+            self._fading_out = False
+            self._current_music = None
+            path = self._music_paths.get(key)
+            if path:
+                self._start_track(path, key)
+            return
         if not self._fading_out:
             self._fading_out = True
             self._end_fading = False
@@ -219,6 +280,9 @@ class SoundManager:
         """Fade out to silence (e.g. entering gameplay)."""
         self._loop_wait = 0.0
         self._loop_key = None
+        if self._is_web_audio():
+            self._theme_target = None
+            return
         if self._current_music is None and not self._fading_out:
             return
         self._pending_music = None
@@ -231,11 +295,41 @@ class SoundManager:
             except Exception:
                 self._finish_fade()
 
-    def _start_track(self, path, key):
+    def _stop_web_music(self):
         try:
+            ch = getattr(self, "_web_music_ch", None)
+            if ch is not None:
+                ch.stop()
+        except Exception:
+            pass
+        self._web_music_ch = None
+        self._web_music_snd = None
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+
+    def _start_track(self, path, key):
+        if not getattr(self, "_audio_unlocked", False):
+            self._wanted_music = key
+            return
+        try:
+            if self._is_web_audio():
+                self._stop_web_music()
+                snd = pygame.mixer.Sound(path)
+                snd.set_volume(self.music_volume)
+                ch = pygame.mixer.Channel(7)
+                ch.set_volume(self.music_volume)
+                ch.play(snd, loops=-1)
+                self._web_music_snd = snd
+                self._web_music_ch = ch
+                self._current_music = key
+                self._fading_out = False
+                self._pending_music = None
+                self._web_live = key
+                return
             pygame.mixer.music.load(path)
             pygame.mixer.music.set_volume(0.0)
-            # Play once — we handle re-loop + gap ourselves
             pygame.mixer.music.play(0, fade_ms=self.FADE_MS)
             pygame.mixer.music.set_volume(self.music_volume)
             self._current_music = key
@@ -247,6 +341,16 @@ class SoundManager:
             self._loop_wait = 0.0
             self._loop_key = None
         except Exception as e:
+            msg = str(e).lower()
+            if "interact" in msg or "user didn't" in msg or "user didnt" in msg:
+                self._audio_unlocked = False
+                self._wanted_music = key
+                self._current_music = None
+                return
+            if "interrupted" in msg or "pause()" in msg:
+                # un seul essai plus tard, pas chaque frame
+                self._current_music = None
+                return
             print("Music play failed:", e)
             self._current_music = None
             self._fading_out = False
@@ -268,8 +372,40 @@ class SoundManager:
             return self.END_FADE_CREDITS
         return self.END_FADE_DEFAULT
 
+    def _tick_web_theme(self):
+        """WASM: une piste = play(-1). Jamais get_busy (il ment et relance stop/play)."""
+        if not getattr(self, "_audio_unlocked", False):
+            return
+        target = getattr(self, "_theme_target", None)
+        live = getattr(self, "_web_live", None)
+        cd = getattr(self, "_web_cooldown", 0)
+        if cd > 0:
+            self._web_cooldown = cd - 1
+            if self._web_cooldown == 0 and target:
+                path = self._music_paths.get(target)
+                if path and os.path.exists(path):
+                    self._start_track(path, target)
+                    self._web_live = target
+            elif self._web_cooldown == 0:
+                self._web_live = None
+            return
+        if live == target:
+            return
+        self._stop_web_music()
+        self._current_music = None
+        self._fading_out = False
+        self._loop_wait = 0.0
+        self._loop_key = None
+        if target is None:
+            self._web_live = None
+            return
+        self._web_cooldown = 4
+
     def update(self, dt):
         """Call each frame: crossfades, end-of-track fade, loop gap."""
+        if self._is_web_audio():
+            self._tick_web_theme()
+            return
         # Waiting between loops
         if self._loop_wait > 0:
             self._loop_wait -= dt
