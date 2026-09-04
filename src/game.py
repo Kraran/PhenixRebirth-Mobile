@@ -33,6 +33,8 @@ from starfield import Starfield
 from sounds import SoundManager
 from i18n import set_lang, get_lang, t, t_help, t_list, get_credits_lines, LANGS, LANG_CODES
 from highscores import load_highscores, is_highscore, insert_score, reset_highscores
+from input_state import InputState
+from touch_controls import TouchControls
 
 from settings import user_data_dir, asset_path
 SETTINGS_FILE = os.path.join(user_data_dir(), "settings.json")
@@ -140,6 +142,10 @@ class Game:
                 pass
         
         self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
+        if not hasattr(self, "touch"):
+            self.touch = TouchControls(BASE_WIDTH, BASE_HEIGHT)
+        self.touch_enabled = True   # Phase 1 : test souris = doigt
+        print("[Phenix Mobile] touch HUD ON — si tu ne vois pas la barre MAGENTA, mauvais dossier")
         self.formation = EnemyFormation()
         self.explosions = []
         self.tesla_fx = None
@@ -2225,7 +2231,11 @@ class Game:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
-            elif event.type in (getattr(pygame, "JOYDEVICEADDED", -1), getattr(pygame, "JOYDEVICEREMOVED", -2)):
+            if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
+                if self.touch.handle_event(event, vr):
+                    continue
+            if event.type in (getattr(pygame, "JOYDEVICEADDED", -1), getattr(pygame, "JOYDEVICEREMOVED", -2)):
                 self._poll_gamepad()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F12:
@@ -2764,6 +2774,16 @@ class Game:
             ai_move = ai_shoot = None
             if self.attract_mode:
                 ai_move, ai_shoot = self._attract_ai()
+            elif getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
+                ts = self.touch.finalize(vr)
+                if ts.active or ts.fire or ts.dx != 0.0:
+                    ai_move = ts.dx
+                    ai_shoot = ts.fire
+                if ts.phenix:
+                    self._activate_phenix_from_input(self.player)
+                if ts.pause and self.started and not self.game_over:
+                    self._toggle_pause()
             for ship in self._ships():
                 ship.rumble_level = int(getattr(self, "rumble_level", 3))
                 ship.autofire = True if self.attract_mode else bool(getattr(self, "autofire", True))
@@ -3649,6 +3669,9 @@ class Game:
             sc = self._ensure_scanline_surf()
             if sc is not None:
                 self.game_surface.blit(sc, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+
+        if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+            self.touch.draw(self.game_surface)
         
         # Present — scale game only when needed; bezel art is cached
         mode = getattr(self, "display_mode", "window")
