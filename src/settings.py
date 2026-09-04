@@ -23,10 +23,17 @@ def project_root():
 
 
 def user_data_dir():
-    """Writable directory for settings.json / highscores.json (next to the .exe when frozen)."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return project_root()
+    """Writable directory for settings.json / highscores.json.
+
+    Desktop: project root (dev) or folder next to the frozen exe.
+    Android / pygbag: sandbox via platform_io.writable_dir.
+    """
+    from platform_io import writable_dir
+    if getattr(sys, "frozen", False) and not hasattr(sys, "getandroidapilevel"):
+        fallback = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        fallback = project_root()
+    return writable_dir(fallback)
 
 
 def asset_path(*parts):
@@ -89,6 +96,13 @@ def detect_refresh_rate():
             rate = pygame.display.get_current_refresh_rate() or 60
     except Exception:
         rate = 60
+
+    try:
+        from platform_io import prefer_60hz
+        if prefer_60hz():
+            return 60
+    except Exception:
+        pass
 
     # Map to supported targets only (60 / 120 for now)
     if rate >= 100:

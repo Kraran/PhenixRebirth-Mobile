@@ -13,6 +13,14 @@ import pygame
 import os
 
 from settings import asset_path
+
+def __mixer_buf():
+    try:
+        from platform_io import mixer_buffer
+        return int(mixer_buffer())
+    except Exception:
+        return 512
+
 SOUND_DIR = asset_path("sounds")
 MUSIC_DIR = asset_path("music")
 
@@ -43,7 +51,7 @@ class SoundManager:
         self._loop_key = None  # key to restart after gap
         try:
             if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=__mixer_buf())
             for name, vol in [
                 ("shoot", 0.45),
                 ("explosion", 0.65),
@@ -335,3 +343,30 @@ class SoundManager:
                 pygame.mixer.music.set_volume(self.music_volume)
             except Exception:
                 pass
+
+    def suspend(self):
+        """App in background: halt mixer, keep theme state."""
+        self._suspended = True
+        try:
+            pygame.mixer.music.pause()
+        except Exception:
+            pass
+        try:
+            pygame.mixer.pause()
+        except Exception:
+            pass
+
+    def resume(self):
+        """App back to foreground."""
+        self._suspended = False
+        try:
+            pygame.mixer.unpause()
+        except Exception:
+            pass
+        try:
+            pygame.mixer.music.unpause()
+            if not self._end_fading and not self._fading_out:
+                pygame.mixer.music.set_volume(self.music_volume)
+        except Exception:
+            pass
+

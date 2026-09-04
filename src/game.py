@@ -99,6 +99,11 @@ class Game:
     def __init__(self, soft=False):
         """soft=True: reset session state without recreating the window (no desktop flash)."""
         if not soft:
+            try:
+                from platform_io import apply_sdl_mobile_hints
+                apply_sdl_mobile_hints()
+            except Exception:
+                pass
             pygame.init()
             # Load display prefs early so the FIRST (and only) window is correct
             try:
@@ -146,6 +151,7 @@ class Game:
             self.touch = TouchControls(BASE_WIDTH, BASE_HEIGHT)
         self.touch_enabled = True
         self._ts = None
+        self._app_suspended = False
         self.formation = EnemyFormation()
         self.explosions = []
         self.tesla_fx = None
@@ -2296,10 +2302,77 @@ class Game:
             return ts
         return ts
 
+
+    def _is_app_background_event(self, event):
+        et = event.type
+        bg = getattr(pygame, "APP_WILLENTERBACKGROUND", -100)
+        lost = getattr(pygame, "WINDOWFOCUSLOST", -101)
+        if et == bg:
+            return True
+        if et == lost:
+            try:
+                from platform_io import is_mobile_runtime
+                return is_mobile_runtime()
+            except Exception:
+                return False
+        if et == getattr(pygame, "ACTIVEEVENT", -102):
+            gain = getattr(event, "gain", 1)
+            state = getattr(event, "state", 0)
+            # state 2 = input focus, 1 = mouse focus — loss of app focus
+            if gain == 0 and state in (2, 6):
+                try:
+                    from platform_io import is_mobile_runtime
+                    return is_mobile_runtime()
+                except Exception:
+                    return False
+        return False
+
+    def _is_app_foreground_event(self, event):
+        et = event.type
+        fg = getattr(pygame, "APP_DIDENTERFOREGROUND", -103)
+        gained = getattr(pygame, "WINDOWFOCUSGAINED", -104)
+        if et == fg:
+            return True
+        if et == gained:
+            try:
+                from platform_io import is_mobile_runtime
+                return is_mobile_runtime()
+            except Exception:
+                return False
+        if et == getattr(pygame, "ACTIVEEVENT", -102):
+            if getattr(event, "gain", 0) == 1 and getattr(event, "state", 0) in (2, 6):
+                try:
+                    from platform_io import is_mobile_runtime
+                    return is_mobile_runtime()
+                except Exception:
+                    return False
+        return False
+
+    def _on_app_background(self):
+        """Home / appel : pause partie + coupe le mixer."""
+        self._app_suspended = True
+        if self.started and not self.game_over:
+            self.paused = True
+            self.pause_options = False
+        if hasattr(self, "sounds") and self.sounds:
+            self.sounds.suspend()
+
+    def _on_app_foreground(self):
+        """Retour au jeu : mixer on, on reste en pause (le joueur valide Reprendre)."""
+        self._app_suspended = False
+        if hasattr(self, "sounds") and self.sounds:
+            self.sounds.resume()
+
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif self._is_app_background_event(event):
+                self._on_app_background()
+                continue
+            elif self._is_app_foreground_event(event):
+                self._on_app_foreground()
+                continue
             if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
                 vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
                 if self.touch.handle_event(event, vr):
