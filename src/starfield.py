@@ -299,15 +299,15 @@ class Starfield:
         self.galaxies = []
         self.nebula = None
 
-        if random.random() < 0.30:
+        if random.random() < 0.16:
             self.planets.append(Planet())
-        if random.random() < 0.4:
+        if random.random() < 0.18:
             self.galaxies.append(Galaxy())
 
-        # Planets slightly less common; nebulae a bit under planets
-        self.planet_timer = random.uniform(16.0, 28.0)
-        self.galaxy_timer = random.uniform(10.0, 18.0)
-        self.nebula_timer = random.uniform(20.0, 36.0)
+        # Less frequent decorations — mid-range GPU budget
+        self.planet_timer = random.uniform(28.0, 44.0)
+        self.galaxy_timer = random.uniform(22.0, 36.0)
+        self.nebula_timer = random.uniform(40.0, 70.0)
 
         self.last_player_x = BASE_WIDTH / 2
 

@@ -7,6 +7,7 @@ Object lifetime is short; Game caps concurrent instances for performance.
 import pygame
 import math
 import random
+from settings import MAX_PARTICLES_SOFT, FX_SCALE
 
 class Explosion:
     """
@@ -105,6 +106,16 @@ class Explosion:
             self._spawn_ring(20, (255, 255, 255))
 
     def _spawn_particles(self, count, min_spd, max_spd, colors):
+        try:
+            scale = float(FX_SCALE)
+            cap = int(MAX_PARTICLES_SOFT)
+        except Exception:
+            scale, cap = 0.5, 56
+        count = max(4, int(count * scale))
+        room = cap - len(self.particles)
+        if room <= 0:
+            return
+        count = min(count, room)
         for _ in range(count):
             angle = random.uniform(0, math.pi * 2)
             speed = random.uniform(min_spd, max_spd)
@@ -119,6 +130,10 @@ class Explosion:
             })
 
     def _spawn_sparks(self, count, color):
+        try:
+            count = max(3, int(count * float(FX_SCALE)))
+        except Exception:
+            count = max(3, count // 2)
         for _ in range(count):
             angle = random.uniform(0, math.pi * 2)
             speed = random.uniform(180, 480)

@@ -46,7 +46,7 @@ BASE_HEIGHT = 720
 
 # Frame rate: 60 or 120 (144 later)
 # Will be set at runtime by detect_refresh_rate()
-FPS_TARGET = 120
+FPS_TARGET = 60
 VSYNC = True
 
 # Colors
@@ -72,11 +72,13 @@ ENEMY_DIVE_CHANCE = 0.0018
 # Game feel
 SCREEN_SHAKE_DECAY = 14.0
 
-# Performance
-MAX_PARTICLES_SOFT = 120          # soft cap for simultaneous explosion particles
-STAR_FAR_COUNT = 55
-STAR_MID_COUNT = 35
-STAR_NEAR_COUNT = 20
+# Performance — mobile fork (60 Hz, lighter FX)
+MAX_PARTICLES_SOFT = 56
+MAX_EXPLOSIONS = 10
+FX_SCALE = 0.50
+STAR_FAR_COUNT = 28
+STAR_MID_COUNT = 18
+STAR_NEAR_COUNT = 10
 
 
 def detect_refresh_rate():
@@ -97,16 +99,7 @@ def detect_refresh_rate():
     except Exception:
         rate = 60
 
-    try:
-        from platform_io import prefer_60hz
-        if prefer_60hz():
-            return 60
-    except Exception:
-        pass
-
-    # Map to supported targets only (60 / 120 for now)
-    if rate >= 100:
-        return 120
+    # Mobile fork: lock 60. Delta-time keeps the feel.
     return 60
 
 

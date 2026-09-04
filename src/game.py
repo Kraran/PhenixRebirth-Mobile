@@ -50,7 +50,7 @@ def load_user_settings():
         "language": "fr",
         "show_fps": False,
         "scanlines": 0,  # 0=off, 1/2/3 intensity
-        "bezel_style": "phoenix",  # off | phoenix | (future styles)
+        "bezel_style": "off",  # mobile: no ultrawide bezels
         "monitor_index": 0,
     }
     try:
@@ -114,7 +114,7 @@ class Game:
                 self.display_mode = early.get("display_mode", "fullscreen") or "fullscreen"
                 if self.display_mode not in ("window", "fullscreen", "borderless"):
                     self.display_mode = "fullscreen"
-                self.bezel_style = early.get("bezel_style", "phoenix") or "phoenix"
+                self.bezel_style = "off"
             except Exception:
                 self.monitor_index = 0
                 self.display_mode = "fullscreen"
@@ -139,8 +139,8 @@ class Game:
             except Exception:
                 self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT))
             import settings as _settings
-            self.fps_target = detect_refresh_rate()
-            _settings.FPS_TARGET = self.fps_target
+            self.fps_target = 60
+            _settings.FPS_TARGET = 60
             try:
                 pygame.display.set_caption(f"Phenix Rebirth  [{self.fps_target} Hz]")
             except Exception:
@@ -332,7 +332,7 @@ class Game:
         self._scanline_surf = None
         self._scanline_level_cached = None
         if not hasattr(self, "bezel_style"):
-            self.bezel_style = user.get("bezel_style", "phoenix")
+            self.bezel_style = "off"
         if not hasattr(self, "monitor_index"):
             self.monitor_index = int(user.get("monitor_index", 0) or 0)
         # Registry of available bezels (id → i18n key)
@@ -1081,12 +1081,7 @@ class Game:
 
         aspect = sw / float(sh)
         style = getattr(self, "bezel_style", "phoenix")
-        self.bezel_active = (
-            mode == "fullscreen"
-            and style not in (None, "", "off")
-            and aspect > (16.0 / 9.0 + 0.02)
-            and gx >= 40
-        )
+        self.bezel_active = False
 
     def _init_bezel_stars(self):
         """Starfield particles for left/right bezel panels."""
@@ -3279,7 +3274,7 @@ class Game:
         
         # Soft performance cap: keep newest explosions only
         if len(self.explosions) > 24:
-            self.explosions = self.explosions[-24:]
+            self.explosions = self.explosions[-max(4, int(MAX_EXPLOSIONS)):]
         
         if self.shake_amount > 0:
             self.shake_amount = max(0.0, self.shake_amount - SCREEN_SHAKE_DECAY * self.dt)
@@ -3863,14 +3858,7 @@ class Game:
         while self.running:
             # Cap: menu stays at 60 (enough, less CPU on iGPU).
             # In-game use detected refresh, but don't chase 120 if we can't hold it.
-            if not self.started or self.game_over:
-                cap = 60
-            else:
-                cap = self.fps_target
-                # If last second was slow, fall back to 60 to avoid thermal spiral
-                fps_now = self.clock.get_fps()
-                if fps_now > 1.0 and fps_now < 50.0 and self.fps_target > 60:
-                    cap = 60
+            cap = 60
             self.dt = self.clock.tick(cap) / 1000.0
             # Safety clamp (spiral of death protection)
             self.dt = min(self.dt, 0.05)
