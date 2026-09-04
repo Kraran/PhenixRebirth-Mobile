@@ -9,6 +9,7 @@ Loop behaviour:
 - Tracks play once; near the end volume fades out (long fade on credits).
 - After the track ends, wait LOOP_GAP_SEC then restart (all tracks).
 """
+import sys
 import pygame
 import os
 

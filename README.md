@@ -1,16 +1,8 @@
-# Phenix Rebirth Mobile
+# Phenix Rebirth
 
-Fork mobile de **Phenix Rebirth** PC. Dépôt indépendant — on ne merge pas vers le PC.
+**Version 1.1.0**
 
-**Version :** 1.1.0-mobile.0  
-**Cible :** Android, 1 joueur, paysage. Pad Bluetooth optionnel.
-
-### Origine PC
-
-- Repo : https://github.com/Kraran/PhenixRebirth
-- Tag  : v1.1.0
-- SHA  : 48f0414138368f1c139f089c82267ef16cc02ba7
-- Date : 2026-09-03
+A modern, ultra-responsive PC remake of the classic arcade shooter **Phoenix** (1978 / 1980).
 
 Free to play · Open source · MIT License
 
@@ -129,7 +121,7 @@ PhenixRebirth/
 
 Franck Fornasari (Kraran)
 
-Music: *Phenix — Eternal Dawn*, *Eternal Dawn (Game Over)*, *Last Coin (Credits)* — created with [Suno](https://suno.com).
+Music: *Phenix — Eternal Dawn*, *Eternal Dawn (Game Over)*, *Last Coin (Credits)* — created with [Suno](https://suno.com/@ffc059).
 
 Tech: Python, Pygame, delta-time action loop.
 

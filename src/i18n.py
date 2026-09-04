@@ -1190,6 +1190,7 @@ def get_credits_lines():
         ("body", "Phenix — Eternal Dawn (Game Over)"),
         ("body", "Phenix — Last Coin (Credits)"),
         ("body", t_credits("music_suno")),
+        ("body", "suno.com/@ffc059"),
         ("blank", ""),
         ("blank", ""),
         ("header", t_credits("tech_h")),
