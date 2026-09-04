@@ -144,8 +144,8 @@ class Game:
         self.player = Player(BASE_WIDTH // 2, BASE_HEIGHT - 95)
         if not hasattr(self, "touch"):
             self.touch = TouchControls(BASE_WIDTH, BASE_HEIGHT)
-        self.touch_enabled = True   # Phase 1 : test souris = doigt
-        print("[Phenix Mobile] touch HUD ON — si tu ne vois pas la barre MAGENTA, mauvais dossier")
+        self.touch_enabled = True
+        self._ts = None
         self.formation = EnemyFormation()
         self.explosions = []
         self.tesla_fx = None
@@ -196,8 +196,8 @@ class Game:
         self.attract_timer = 0.0
         # Hot-seat 2P: each player has a fully independent run (stage/score/lives/world)
         self.hotseat = False
-        self.play_mode = getattr(self, "play_mode", "solo")  # solo | hotseat | coop
-        self.PLAY_MODES = ["solo", "hotseat", "coop"]
+        self.play_mode = "solo"
+        self.PLAY_MODES = ["solo"]
         self.player2 = None
         self.joysticks = []
         self.lives_shared = 5
@@ -1505,7 +1505,7 @@ class Game:
     def _menu_nav(self, direction):
         """direction: -1 up, +1 down"""
         if self.menu_screen == "main":
-            n = 7  # Jouer, 2 joueurs, Difficulte, Options, High Scores, Credits, Quitter
+            n = 6  # Jouer, Difficulte, Options, High Scores, Credits, Quitter
         elif self.menu_screen == "reset_confirm":
             n = 2  # Oui, Non
         else:
@@ -1563,11 +1563,6 @@ class Game:
         """direction: -1 left, +1 right — change current option value"""
         if self.menu_screen == "main":
             if self.menu_index == 1:
-                modes = getattr(self, "PLAY_MODES", ["solo", "hotseat", "coop"])
-                cur = getattr(self, "play_mode", "solo")
-                idx = modes.index(cur) if cur in modes else 0
-                self.play_mode = modes[(idx + direction) % len(modes)]
-            elif self.menu_index == 2:
                 idx = self.DIFFICULTIES.index(self.difficulty)
                 self.difficulty = self.DIFFICULTIES[(idx + direction) % len(self.DIFFICULTIES)]
             return
@@ -2137,13 +2132,13 @@ class Game:
             self._focus_option("reset_hs")
         elif self.menu_screen == "options":
             self.menu_screen = "main"
-            self.menu_index = 3  # OPTIONS
+            self.menu_index = 2  # OPTIONS
         elif self.menu_screen == "highscores":
             self.menu_screen = "main"
-            self.menu_index = 4
+            self.menu_index = 3
         elif self.menu_screen == "credits":
             self.menu_screen = "main"
-            self.menu_index = 5
+            self.menu_index = 4
         else:
             self.menu_screen = "main"
             self.menu_index = 0
@@ -2152,41 +2147,26 @@ class Game:
 
         if self.menu_screen == "main":
             if self.menu_index == 0:
-                mode = getattr(self, "play_mode", "solo")
-                if mode == "hotseat":
-                    self.hotseat = True
-                    self.current_p = 0
-                    self._init_hotseat_slots()
-                    self._apply_slot(self.slots[0])
-                    self.started = True
-                    self.hotseat_wait = True
-                    self.hotseat_next = 0
-                    self.input_grace = 0.35
-                elif mode == "coop":
-                    self._start_coop()
-                else:
-                    self.hotseat = False
-                    self.player2 = None
-                    self._apply_difficulty_start()
-                    self.started = True
-                    self.input_grace = 0.35
+                self.play_mode = "solo"
+                self.hotseat = False
+                self.player2 = None
+                self._apply_difficulty_start()
+                self.started = True
+                self.input_grace = 0.35
             elif self.menu_index == 1:
-                pass  # Mode: Left/Right only
+                self._menu_adjust(1)
             elif self.menu_index == 2:
-                # Difficulty changes only with Left/Right — Enter does not cycle
-                pass
-            elif self.menu_index == 3:
                 self.menu_screen = "options"
                 self.menu_index = 0
-            elif self.menu_index == 4:
+            elif self.menu_index == 3:
                 self.hs_entries = load_highscores()
                 self.menu_screen = "highscores"
                 self.menu_index = 0
-            elif self.menu_index == 5:
+            elif self.menu_index == 4:
                 self.menu_screen = "credits"
                 self.credits_scroll = float(BASE_HEIGHT)
                 self.menu_index = 0
-            elif self.menu_index == 6:
+            elif self.menu_index == 5:
                 self.running = False
         elif self.menu_screen == "reset_confirm":
             if self.menu_index == 0:  # Oui
@@ -2206,7 +2186,7 @@ class Game:
                     self.menu_index = 0
                 else:
                     self.menu_screen = "main"
-                    self.menu_index = 3
+                    self.menu_index = 2
 
     # --- Input ---
 
@@ -2226,6 +2206,95 @@ class Game:
         except Exception as e:
             print("Screenshot failed:", e)
             return None
+
+    def _touch_layout_mode(self):
+        if not self.started or self.game_over or self.paused or self.quit_confirm:
+            return "menu"
+        return "game"
+
+    def _apply_touch_ui(self):
+        """FIRE = valider, II = retour, tap ligne = action. Une seule finalize/frame."""
+        if not getattr(self, "touch_enabled", False) or not hasattr(self, "touch"):
+            self._ts = None
+            return None
+        vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
+        ts = self.touch.finalize(vr)
+        self._ts = ts
+        if getattr(self, "input_grace", 0) > 0 or self.attract_mode:
+            return ts
+
+        if ts.menu_pick is not None and not self.started and not self.game_over and not self.quit_confirm:
+            self._reset_menu_idle()
+            kind = ts.menu_kind or "confirm"
+            self.menu_index = int(ts.menu_pick)
+            if kind == "cycle":
+                self._menu_adjust(1)
+            else:
+                self._menu_confirm()
+            return ts
+
+        if ts.menu_confirm:
+            self._reset_menu_idle()
+            if self.quit_confirm and not self.started:
+                if self.quit_index == 0:
+                    self.running = False
+                else:
+                    self.quit_confirm = False
+            elif self.game_over and self.hs_phase == "enter":
+                self._submit_highscore()
+            elif self.game_over and self.hs_phase == "table":
+                saved = (
+                    self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
+                    self.fps_target, self.show_fps, self.difficulty, self.language,
+                    getattr(self, "bezel_style", "phoenix"), int(getattr(self, "monitor_index", 0) or 0),
+                )
+                self.__init__(soft=True)
+                (self.input_mode, self.display_mode, self.sfx_volume, self.music_volume,
+                 self.fps_target, self.show_fps, self.difficulty, self.language,
+                 self.bezel_style, self.monitor_index) = saved
+            elif self.paused and self.started and not self.game_over:
+                if self.pause_options:
+                    self._menu_confirm()
+                elif self.pause_index == 0:
+                    self.paused = False
+                elif self.pause_index == 1:
+                    self.pause_options = True
+                    self.menu_screen = "options"
+                    self.menu_index = 0
+                else:
+                    self._quit_to_menu()
+            elif not self.started and not self.game_over:
+                if self.menu_screen in ("help", "highscores", "credits"):
+                    self.menu_screen = "main"
+                    self.menu_index = 0
+                else:
+                    self._menu_confirm()
+            return ts
+
+        if ts.menu_back:
+            self._reset_menu_idle()
+            if self.quit_confirm and not self.started:
+                self.quit_confirm = False
+            elif self.paused and self.started and not self.game_over:
+                if self.pause_options:
+                    if self.menu_screen == "reset_confirm":
+                        self.menu_screen = "options"
+                        self._focus_option("reset_hs")
+                    else:
+                        self.pause_options = False
+                        self.menu_index = 0
+                else:
+                    self.paused = False
+            elif self.started and not self.game_over:
+                self._toggle_pause()
+            elif not self.started:
+                if self.menu_screen == "main":
+                    self.quit_confirm = True
+                    self.quit_index = 1
+                else:
+                    self._menu_back()
+            return ts
+        return ts
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -2646,6 +2715,7 @@ class Game:
     # --- Simulation step ---
     def update(self):
         self.title_timer += self.dt
+        self._apply_touch_ui()
         self._update_music()
         self.sounds.update(self.dt)
         # Detect controller plugged after launch (especially on menus)
@@ -2774,16 +2844,14 @@ class Game:
             ai_move = ai_shoot = None
             if self.attract_mode:
                 ai_move, ai_shoot = self._attract_ai()
-            elif getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
-                vr = getattr(self, "view_rect", pygame.Rect(0, 0, BASE_WIDTH, BASE_HEIGHT))
-                ts = self.touch.finalize(vr)
-                if ts.active or ts.fire or ts.dx != 0.0:
-                    ai_move = ts.dx
-                    ai_shoot = ts.fire
-                if ts.phenix:
-                    self._activate_phenix_from_input(self.player)
-                if ts.pause and self.started and not self.game_over:
-                    self._toggle_pause()
+            elif getattr(self, "touch_enabled", False):
+                ts = getattr(self, "_ts", None)
+                if ts is not None and not self.paused:
+                    if ts.active or ts.fire or ts.dx != 0.0:
+                        ai_move = ts.dx
+                        ai_shoot = ts.fire
+                    if ts.phenix:
+                        self._activate_phenix_from_input(self.player)
             for ship in self._ships():
                 ship.rumble_level = int(getattr(self, "rumble_level", 3))
                 ship.autofire = True if self.attract_mode else bool(getattr(self, "autofire", True))
@@ -3345,27 +3413,29 @@ class Game:
             elif self.menu_screen == "main":
                 diff_key = {"novice": "diff_novice", "normal": "diff_normal", "veteran": "diff_veteran"}.get(self.difficulty, "diff_normal")
                 diff = t(diff_key)
-                mode = getattr(self, "play_mode", "solo")
-                mode_key = {"solo": "mode_solo", "hotseat": "mode_hotseat", "coop": "mode_coop"}.get(mode, "mode_solo")
                 options = [
-                    t("play"),
-                    f"{t('mode')} :  <  {t(mode_key)}  >",
-                    f"{t('difficulty')} :  <  {diff}  >",
-                    t("options"),
-                    t("high_scores"),
-                    t("credits"),
-                    t("quit"),
+                    (t("play"), "confirm"),
+                    (f"{t('difficulty')} :  <  {diff}  >", "cycle"),
+                    (t("options"), "confirm"),
+                    (t("high_scores"), "confirm"),
+                    (t("credits"), "confirm"),
+                    (t("quit"), "confirm"),
                 ]
-                # Under logo + subtitle, no overlap
                 logo_h = self.logo_frames[0].get_height() if self.logo_frames else 100
                 base_y = max(300, 12 + logo_h + 48)
-                spacing = 34 if base_y + 6 * 34 < BASE_HEIGHT - 100 else 30
-                for i, label in enumerate(options):
+                spacing = 38 if base_y + 5 * 38 < BASE_HEIGHT - 110 else 34
+                rows = []
+                for i, (label, kind) in enumerate(options):
                     selected = (i == self.menu_index)
                     col = (255, 230, 120) if selected else (160, 160, 190)
                     prefix = "> " if selected else "  "
                     surf = self.medium_font.render(prefix + label, True, col)
-                    self.game_surface.blit(surf, (BASE_WIDTH // 2 - surf.get_width() // 2, base_y + i * spacing))
+                    y = base_y + i * spacing
+                    x = BASE_WIDTH // 2 - surf.get_width() // 2
+                    self.game_surface.blit(surf, (x, y))
+                    rows.append((pygame.Rect(x - 24, y - 4, surf.get_width() + 48, surf.get_height() + 8), i, kind))
+                if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
+                    self.touch.set_menu_rows(rows)
                 
                 if self.gamepad_detected:
                     status = self.font.render(t("gamepad_detected"), True, (100, 200, 140))
@@ -3671,7 +3741,9 @@ class Game:
                 self.game_surface.blit(sc, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
 
         if getattr(self, "touch_enabled", False) and hasattr(self, "touch"):
-            self.touch.draw(self.game_surface)
+            if self.started or self.menu_screen != "main":
+                self.touch.set_menu_rows([])
+            self.touch.draw(self.game_surface, mode=self._touch_layout_mode())
         
         # Present — scale game only when needed; bezel art is cached
         mode = getattr(self, "display_mode", "window")

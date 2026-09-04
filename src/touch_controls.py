@@ -1,7 +1,7 @@
 """HUD tactile paysage + souris debug PC.
 
-Coordonnées = canvas 1280x720 (pas pixels écran).
-Pad = 1 axe, sortie digitale -1/0/+1. Fire = hold. Phenix / pause = edge.
+Coordonnées = canvas 1280x720.
+Pad 1 axe digital. Fire = hold / confirm. Phenix & pause = edge.
 """
 import pygame
 from input_state import InputState
@@ -19,19 +19,26 @@ class TouchControls:
         self._prev_fire_btn = False
         self._holds = {}
         self._pad_x = None
+        self._pending_pick = None
+        self._pending_kind = None
+        self.menu_rows = []
         self._layout()
 
     def _layout(self):
         w, h = self.w, self.h
-        pad_w, pad_h = 360, 220
-        self.pad = pygame.Rect(24, h - pad_h - 20, pad_w, pad_h)
-        btn = 130
-        right = w - 24
-        self.fire = pygame.Rect(right - btn, h - btn - 24, btn, btn)
-        self.phenix = pygame.Rect(right - 100, self.fire.y - 100 - 14, 100, 100)
-        self.pause = pygame.Rect(right - 64, 16, 64, 48)
+        pad_w, pad_h = 320, 180
+        self.pad = pygame.Rect(22, h - pad_h - 18, pad_w, pad_h)
+        btn = 108
+        right = w - 22
+        self.fire = pygame.Rect(right - btn, h - btn - 22, btn, btn)
+        self.phenix = pygame.Rect(right - 88, self.fire.y - 88 - 12, 88, 88)
+        self.pause = pygame.Rect(right - 56, 14, 56, 42)
 
-    def _hit(self, x, y):
+    def set_menu_rows(self, rows):
+        """rows: list of (pygame.Rect, index, kind)."""
+        self.menu_rows = list(rows or [])
+
+    def _hit_button(self, x, y):
         if self.fire.collidepoint(x, y):
             return "fire"
         if self.phenix.collidepoint(x, y):
@@ -42,12 +49,17 @@ class TouchControls:
             return "pad"
         return None
 
+    def _hit_row(self, x, y):
+        for rect, idx, kind in self.menu_rows:
+            if rect.collidepoint(x, y):
+                return idx, kind
+        return None
+
     def _pad_dx(self, x):
-        cx = self.pad.centerx
         half = self.pad.width * 0.5
         if half <= 1:
             return 0.0
-        t = (x - cx) / half
+        t = (x - self.pad.centerx) / half
         if t > self.DEADZONE:
             return 1.0
         if t < -self.DEADZONE:
@@ -89,11 +101,16 @@ class TouchControls:
             pid = ("m", 0)
 
         x, y = self.screen_to_canvas(sx, sy, view_rect)
-        zone = self._hit(x, y)
+        zone = self._hit_button(x, y)
 
         if down:
             if zone is None:
-                return False
+                hit = self._hit_row(x, y)
+                if hit is None:
+                    return False
+                self._pending_pick, self._pending_kind = hit
+                self._holds[pid] = "row"
+                return True
             self._holds[pid] = zone
             if zone == "pad":
                 self._pad_x = x
@@ -127,13 +144,6 @@ class TouchControls:
             elif zone == "pad":
                 if self._pad_x is not None:
                     dx = self._pad_dx(self._pad_x)
-                elif pid[0] == "m":
-                    try:
-                        mx, my = pygame.mouse.get_pos()
-                        x, _y = self.screen_to_canvas(mx, my, view_rect)
-                        dx = self._pad_dx(x)
-                    except Exception:
-                        pass
 
         self.state.dx = dx
         self.state.fire = fire
@@ -142,34 +152,45 @@ class TouchControls:
         self.state.active = bool(self._holds)
         self.state.menu_confirm = fire and not self._prev_fire_btn
         self.state.menu_back = self.state.pause
+        self.state.menu_pick = self._pending_pick
+        self.state.menu_kind = self._pending_kind
+        self._pending_pick = None
+        self._pending_kind = None
         self._prev_phenix = phenix_held
         self._prev_pause = pause_held
         self._prev_fire_btn = fire
         return self.state
 
-    def draw(self, surface):
+    def draw(self, surface, mode="game"):
+        """mode: 'game' (pad+tir+phenix+pause) ou 'menu' (OK + retour)."""
         overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-        banner = pygame.Rect(0, 0, self.w, 36)
-        pygame.draw.rect(overlay, (220, 40, 180, 210), banner)
-        pygame.draw.rect(overlay, (80, 180, 255, 100), self.pad, border_radius=18)
-        pygame.draw.rect(overlay, (200, 240, 255, 230), self.pad, 3, border_radius=18)
-        pygame.draw.line(
-            overlay, (200, 240, 255, 180),
-            (self.pad.centerx, self.pad.y + 10),
-            (self.pad.centerx, self.pad.bottom - 10), 3,
-        )
-        pygame.draw.rect(overlay, (255, 50, 50, 150), self.fire, border_radius=self.fire.w // 2)
-        pygame.draw.rect(overlay, (255, 220, 220, 240), self.fire, 3, border_radius=self.fire.w // 2)
-        pygame.draw.rect(overlay, (255, 160, 30, 150), self.phenix, border_radius=18)
-        pygame.draw.rect(overlay, (255, 230, 160, 240), self.phenix, 3, border_radius=18)
-        pygame.draw.rect(overlay, (220, 220, 240, 150), self.pause, border_radius=8)
-        pygame.draw.rect(overlay, (255, 255, 255, 240), self.pause, 2, border_radius=8)
-        font = pygame.font.Font(None, 28)
-        big = pygame.font.Font(None, 32)
-        title = big.render("MOBILE TOUCH ON  —  PAD / FIRE / PHENIX", True, (255, 255, 255))
-        overlay.blit(title, title.get_rect(center=banner.center))
-        for label, rect in (("PAD", self.pad), ("FIRE", self.fire),
-                            ("PHENIX", self.phenix), ("II", self.pause)):
-            txt = font.render(label, True, (255, 255, 255))
-            overlay.blit(txt, txt.get_rect(center=rect.center))
+        font = pygame.font.Font(None, 24)
+
+        if mode == "game":
+            pygame.draw.rect(overlay, (30, 90, 160, 48), self.pad, border_radius=16)
+            pygame.draw.rect(overlay, (180, 220, 255, 90), self.pad, 2, border_radius=16)
+            pygame.draw.line(
+                overlay, (180, 220, 255, 70),
+                (self.pad.centerx, self.pad.y + 10),
+                (self.pad.centerx, self.pad.bottom - 10), 2,
+            )
+            pygame.draw.ellipse(overlay, (200, 40, 40, 70), self.fire)
+            pygame.draw.ellipse(overlay, (255, 200, 200, 120), self.fire, 2)
+            pygame.draw.rect(overlay, (200, 120, 20, 70), self.phenix, border_radius=14)
+            pygame.draw.rect(overlay, (255, 210, 120, 120), self.phenix, 2, border_radius=14)
+            pygame.draw.rect(overlay, (200, 200, 220, 60), self.pause, border_radius=8)
+            pygame.draw.rect(overlay, (230, 230, 240, 120), self.pause, 2, border_radius=8)
+            for label, rect in (("FIRE", self.fire), ("PHENIX", self.phenix), ("II", self.pause)):
+                txt = font.render(label, True, (255, 255, 255))
+                overlay.blit(txt, txt.get_rect(center=rect.center))
+        else:
+            pygame.draw.ellipse(overlay, (200, 40, 40, 90), self.fire)
+            pygame.draw.ellipse(overlay, (255, 210, 210, 150), self.fire, 2)
+            pygame.draw.rect(overlay, (200, 200, 220, 80), self.pause, border_radius=8)
+            pygame.draw.rect(overlay, (240, 240, 250, 150), self.pause, 2, border_radius=8)
+            ok = font.render("OK", True, (255, 255, 255))
+            back = font.render("II", True, (255, 255, 255))
+            overlay.blit(ok, ok.get_rect(center=self.fire.center))
+            overlay.blit(back, back.get_rect(center=self.pause.center))
+
         surface.blit(overlay, (0, 0))
