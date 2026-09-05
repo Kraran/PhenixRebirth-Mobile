@@ -284,7 +284,9 @@ class Game:
         if pygame.joystick.get_count() > 0:
             self.joystick = pygame.joystick.Joystick(0)
             self.joystick.init()
-            self.gamepad_detected = True
+            self.gamepad_detected = self._real_gamepad()
+            if not self.gamepad_detected:
+                self.joystick = None
         
         # Menu state: "main" | "options"
         self.menu_screen = "main"
@@ -1106,6 +1108,15 @@ class Game:
         """
         if not getattr(self, "screen", None):
             return
+        try:
+            from platform_io import is_android
+            if is_android():
+                sw, sh = self.screen.get_size()
+                self.view_rect = pygame.Rect(0, 0, sw, sh)
+                self.bezel_active = False
+                return
+        except Exception:
+            pass
         mode = getattr(self, "display_mode", "window")
         sw, sh = self.screen.get_size()
         if mode == "window" or sh <= 0 or sw <= 0:
@@ -1386,7 +1397,24 @@ class Game:
             mon_i, mon_w, mon_h, mon_x, mon_y = 0, BASE_WIDTH, BASE_HEIGHT, 0, 0
 
         try:
-            from platform_io import is_web
+            from platform_io import is_web, is_android
+            if is_android():
+                # 1280x720 + SCALED = upscale GPU, pas transform.scale CPU vers 2400x1080
+                flags = pygame.FULLSCREEN | pygame.SCALED | pygame.DOUBLEBUF
+                # Framebuffer 640x360 : SDL upscale GPU. 1280x720 logiciel = plafond ~20fps.
+                self._android_fb = (640, 360)
+                self.screen = pygame.display.set_mode(self._android_fb, flags)
+                self.display_mode = "fullscreen"
+                self.bezel_active = False
+                self.view_rect = pygame.Rect(0, 0, self._android_fb[0], self._android_fb[1])
+                self._android_fb_buf = pygame.Surface(self._android_fb)
+                try:
+                    if getattr(self, "game_surface", None) is None:
+                        self.game_surface = pygame.Surface((BASE_WIDTH, BASE_HEIGHT)).convert()
+                except Exception:
+                    pass
+                print("[Phenix] android SCALED 1280x720", self.screen.get_size(), flush=True)
+                return
             if is_web():
                 print("[Phenix] web set_mode 1280x720 force", flush=True)
                 # Ne PAS reutiliser le canvas pygbag (souvent plus petit → coupe bas/droite).
@@ -1525,12 +1553,12 @@ class Game:
                 try:
                     self.joystick = pygame.joystick.Joystick(0)
                     self.joystick.init()
-                    self.gamepad_detected = True
-                    # First detection on menus → default to gamepad if still on auto feel
-                    if not self.started and not self.game_over:
-                        # Newly plugged on menu → switch to gamepad
+                    self.gamepad_detected = self._real_gamepad()
+                    if self.gamepad_detected and not self.started and not self.game_over:
                         self.input_mode = "gamepad"
                         self.save_settings()
+                    elif not self.gamepad_detected:
+                        self.joystick = None
                 except Exception:
                     self.joystick = None
                     self.gamepad_detected = False
@@ -2322,10 +2350,24 @@ class Game:
             return "menu"
         return "game"
 
-    def _touch_hud_visible(self):
-        if not getattr(self, "touch_enabled", False):
+    def _real_gamepad(self):
+        """Ignore Android dummy sticks (accel / virtual)."""
+        js = getattr(self, "joystick", None)
+        if js is None:
             return False
-        if getattr(self, "input_mode", "") == "gamepad" and getattr(self, "gamepad_detected", False):
+        try:
+            name = (js.get_name() or "").lower()
+            if any(s in name for s in ("accelerometer", "virtual", "gpio", "uinput")):
+                return False
+            return int(js.get_numbuttons()) >= 4
+        except Exception:
+            return False
+
+    def _touch_hud_visible(self):
+        if not getattr(self, "touch_enabled", True):
+            return False
+        # Overlay ON by default. Hide only for a real BT/USB pad.
+        if self._real_gamepad() and getattr(self, "input_mode", "") == "gamepad":
             return False
         return True
 
@@ -3994,6 +4036,23 @@ class Game:
                 self.touch.draw(self.game_surface, mode=self._touch_layout_mode())
         
         # Present — scale game only when needed; bezel art is cached
+        try:
+            from platform_io import is_android
+            if is_android():
+                fb = getattr(self, "_android_fb", None)
+                if fb and self.screen.get_size() == fb:
+                    buf = getattr(self, "_android_fb_buf", None)
+                    if buf is None or buf.get_size() != fb:
+                        buf = pygame.Surface(fb)
+                        self._android_fb_buf = buf
+                    pygame.transform.scale(self.game_surface, fb, buf)
+                    self.screen.blit(buf, (0, 0))
+                else:
+                    self.screen.blit(self.game_surface, (0, 0))
+                pygame.display.flip()
+                return
+        except Exception:
+            pass
         mode = getattr(self, "display_mode", "window")
         scr_size = self.screen.get_size()
         if getattr(self, "_present_size", None) != scr_size:
@@ -4051,13 +4110,20 @@ class Game:
                 self._frame_dt = raw if raw > 0 else 0.016
                 self.dt = min(0.05, max(0.001, self._frame_dt))
             else:
-                self.dt = self.clock.tick(60) / 1000.0
+                try:
+                    from platform_io import is_android
+                    _and = is_android()
+                except Exception:
+                    _and = False
+                # Android: pas de cap 60 (vsync SDL + tick = 15-20fps). tick(0) = uncapped.
+                self.dt = self.clock.tick(0 if _and else 60) / 1000.0
                 self._frame_dt = self.dt
                 self.dt = min(self.dt, 0.05)
             self.handle_events()
             self.update()
             self.draw()
-            await asyncio.sleep(0)
+            if web:
+                await asyncio.sleep(0)
         if not web:
             try:
                 pygame.quit()
