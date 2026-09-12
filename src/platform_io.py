@@ -1,68 +1,43 @@
-"""Chemins écrivables + profil runtime (desktop / Android / pygbag).
-
-Ne pas importer pygame ici : ce module est chargé très tôt par settings.py.
-"""
+"""Runtime desktop / Android."""
 import os
 import sys
-
 
 def is_android():
     return (
         "ANDROID_ARGUMENT" in os.environ
         or "ANDROID_PRIVATE" in os.environ
-        or "ANDROID_APP_PATH" in os.environ
-        or sys.platform == "android"
         or hasattr(sys, "getandroidapilevel")
+        or sys.platform == "android"
     )
 
-
 def is_web():
-    return sys.platform in ("emscripten", "wasm") or "pygbag" in sys.modules
-
+    return sys.platform in ("emscripten", "wasm")
 
 def is_mobile_runtime():
     return is_android() or is_web()
 
-
-def prefer_60hz():
-    """Téléphone / WASM : on lock 60 jusqu'à preuve du contraire."""
-    return is_mobile_runtime()
-
-
-def mixer_buffer():
-    return 512 if is_mobile_runtime() else 512  # mobile fork: latence basse partout
-
-
 def apply_sdl_mobile_hints():
-    """À appeler AVANT pygame.init()."""
+    """Avant pygame.init() — pas de opengles2 (blit CPU + GLES = 5 fps)."""
     os.environ.setdefault("SDL_HINT_ORIENTATIONS", "LandscapeLeft LandscapeRight")
     os.environ.setdefault("SDL_ANDROID_TRAP_BACK_BUTTON", "1")
-
+    os.environ.setdefault("SDL_HINT_RENDER_SCALE_QUALITY", "linear")
+    os.environ.setdefault("SDL_RENDER_VSYNC", "0")
+    os.environ.setdefault("SDL_HINT_RENDER_VSYNC", "0")
 
 def writable_dir(fallback):
-    """Dossier settings.json / highscores.json. Créé si besoin."""
-    path = None
+    path = fallback
     if is_android():
         for key in ("ANDROID_APP_PATH", "ANDROID_PRIVATE", "ANDROID_ARGUMENT"):
             raw = os.environ.get(key)
             if raw:
                 path = raw if os.path.isdir(raw) else os.path.dirname(raw)
                 break
-        if not path:
-            home = os.path.expanduser("~")
-            path = os.path.join(home, "phenix_rebirth")
-    elif is_web():
-        path = "/data"
-    elif getattr(sys, "frozen", False):
-        path = os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        path = fallback
-
+        else:
+            path = os.path.join(os.path.expanduser("~"), "phenix_rebirth")
     try:
         os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".write_test")
-        with open(probe, "w", encoding="utf-8") as f:
-            f.write("ok")
+        probe = os.path.join(path, ".w")
+        open(probe, "w").write("ok")
         os.remove(probe)
     except Exception:
         path = fallback
@@ -71,3 +46,19 @@ def writable_dir(fallback):
         except Exception:
             pass
     return path
+
+
+def leave_app():
+    """Close the Android activity. pygame.quit() alone freezes the window."""
+    if not is_android():
+        return
+    try:
+        from jnius import autoclass
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+        try:
+            act.finishAffinity()
+        except Exception:
+            act.finish()
+    except Exception:
+        pass
+    os._exit(0)

@@ -1,3 +1,6 @@
-1.1.1-mobile-demo | APK arm64 | pygame 2.1 software | SHA PC 48f0414
-PC upstream: 48f0414138368f1c139f089c82267ef16cc02ba7 (v1.1.0)
-Phase 6: snapshot web + GitHub Pages
+1.2.0-mobile
+PC origin 1.2.0 GPU SCALED (48f0414 lineage)
+pygame 2.1.0 / p4a / NDK 25b / arm64-v8a / Python 3.11
+canvas logique ultrawide + SCALED + bezels caches
+overlay tactile, hitbox PC, credits analogiques
+PAS demo / PAS pygame-ce / PAS Texture
