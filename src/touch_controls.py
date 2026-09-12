@@ -1,6 +1,6 @@
 """HUD tactile paysage + souris debug PC.
 
-Coordonnées = canvas 1280x720.
+Coordonnees = canvas 1280x720.
 Pad 1 axe digital. Fire = hold / confirm. Phenix & pause = edge.
 """
 import pygame
@@ -22,6 +22,7 @@ class TouchControls:
         self._pending_pick = None
         self._pending_kind = None
         self.menu_rows = []
+        self._finger_xy = {}
         self._layout()
 
     def _layout(self):
@@ -34,8 +35,21 @@ class TouchControls:
         self.phenix = pygame.Rect(right - 88, self.fire.y - 88 - 12, 88, 88)
         self.pause = pygame.Rect(right - 56, 14, 56, 42)
 
+    def credits_stick(self):
+        if not self._finger_xy:
+            return 0.0, 0.0
+        x, y = next(iter(self._finger_xy.values()))
+        nx = (x - self.w * 0.5) / max(1.0, self.w * 0.5)
+        ny = (y - self.h * 0.5) / max(1.0, self.h * 0.5)
+        dead = 0.12
+        def analog(v):
+            if abs(v) <= dead:
+                return 0.0
+            s = (abs(v) - dead) / (1.0 - dead)
+            return max(-1.0, min(1.0, s if v > 0 else -s))
+        return analog(nx), analog(-ny)
+
     def set_menu_rows(self, rows):
-        """rows: list of (pygame.Rect, index, kind)."""
         self.menu_rows = list(rows or [])
 
     def _hit_button(self, x, y):
@@ -67,7 +81,6 @@ class TouchControls:
         return 0.0
 
     def screen_to_canvas(self, sx, sy, view_rect):
-        # pygbag / fenetre 1280x720 : event.pos est deja en canvas
         if view_rect is None or view_rect.width <= 0 or view_rect.height <= 0:
             return sx, sy
         if (view_rect.x == 0 and view_rect.y == 0
@@ -87,7 +100,6 @@ class TouchControls:
         move = et == pygame.MOUSEMOTION or et == finger_move
         if not (down or up or move):
             return False
-
         if et in (finger_down, finger_up, finger_move):
             try:
                 win = pygame.display.get_surface()
@@ -103,15 +115,20 @@ class TouchControls:
                 return False
             sx, sy = event.pos
             pid = ("m", 0)
-
         x, y = self.screen_to_canvas(sx, sy, view_rect)
+        if down or move:
+            self._finger_xy[pid] = (x, y)
+        if up:
+            self._finger_xy.pop(pid, None)
+            if pid[0] == "m":
+                self._finger_xy = {k: v for k, v in self._finger_xy.items() if k[0] != "m"}
         zone = None if hide_buttons else self._hit_button(x, y)
-
         if down:
             if zone is None:
                 hit = self._hit_row(x, y)
                 if hit is None:
-                    return False
+                    self._holds[pid] = "free"
+                    return True
                 self._pending_pick, self._pending_kind = hit
                 self._holds[pid] = "row"
                 return True
@@ -122,7 +139,6 @@ class TouchControls:
                 self._fire_pulse = True
             return True
         if up:
-            # pygbag rate parfois le hit-test UP : on lache tout pointer souris
             if pid[0] == "m":
                 self._pad_x = None
                 for k in list(self._holds):
@@ -147,7 +163,6 @@ class TouchControls:
         self._fire_pulse = False
         phenix_held = False
         pause_held = False
-
         for pid, zone in list(self._holds.items()):
             if zone == "fire":
                 fire = True
@@ -158,7 +173,6 @@ class TouchControls:
             elif zone == "pad":
                 if self._pad_x is not None:
                     dx = self._pad_dx(self._pad_x)
-
         self.state.dx = dx
         self.state.fire = fire
         self.state.phenix = phenix_held and not self._prev_phenix
@@ -176,18 +190,12 @@ class TouchControls:
         return self.state
 
     def draw(self, surface, mode="game"):
-        """mode: 'game' (pad+tir+phenix+pause) ou 'menu' (OK + retour)."""
         overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
         font = pygame.font.Font(None, 24)
-
         if mode == "game":
             pygame.draw.rect(overlay, (30, 90, 160, 48), self.pad, border_radius=16)
             pygame.draw.rect(overlay, (180, 220, 255, 90), self.pad, 2, border_radius=16)
-            pygame.draw.line(
-                overlay, (180, 220, 255, 70),
-                (self.pad.centerx, self.pad.y + 10),
-                (self.pad.centerx, self.pad.bottom - 10), 2,
-            )
+            pygame.draw.line(overlay, (180, 220, 255, 70), (self.pad.centerx, self.pad.y + 10), (self.pad.centerx, self.pad.bottom - 10), 2)
             pygame.draw.ellipse(overlay, (200, 40, 40, 70), self.fire)
             pygame.draw.ellipse(overlay, (255, 200, 200, 120), self.fire, 2)
             pygame.draw.rect(overlay, (200, 120, 20, 70), self.phenix, border_radius=14)
@@ -206,5 +214,4 @@ class TouchControls:
             back = font.render("II", True, (255, 255, 255))
             overlay.blit(ok, ok.get_rect(center=self.fire.center))
             overlay.blit(back, back.get_rect(center=self.pause.center))
-
         surface.blit(overlay, (0, 0))
